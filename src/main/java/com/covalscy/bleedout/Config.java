@@ -11,18 +11,22 @@ public class Config
     private static final ForgeConfigSpec.Builder BUILDER = new ForgeConfigSpec.Builder();
 
     public static final ForgeConfigSpec.IntValue BLEEDOUT_TIME = BUILDER
+            .comment("Bleedout duration in seconds before death")
             .comment("Время кровотечения в секундах перед смертью")
-            .defineInRange("bleedoutTime", 10, 1, 3000);
+            .defineInRange("bleedoutTime", 45, 1, 300);
 
     public static final ForgeConfigSpec.IntValue REVIVE_TIME = BUILDER
+            .comment("Revival time in seconds (right-click on downed player)")
             .comment("Время возрождения в секундах (ПКМ по лежащему игроку)")
             .defineInRange("reviveTime", 5, 1, 60);
 
     public static final ForgeConfigSpec.DoubleValue REVIVE_DISTANCE = BUILDER
+            .comment("Maximum distance in blocks to start and continue revival")
             .comment("Максимальная дальность для начала и продолжения возрождения в блоках")
             .defineInRange("reviveDistance", 5.0, 1.0, 20.0);
 
     public static final ForgeConfigSpec.IntValue SUICIDE_TIME = BUILDER
+            .comment("Time to hold left-click for suicide in seconds")
             .comment("Время удержания ЛКМ для самоубийства в секундах")
             .defineInRange("suicideTime", 3, 1, 10);
 

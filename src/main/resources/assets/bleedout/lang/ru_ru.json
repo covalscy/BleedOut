@@ -1,0 +1,5 @@
+{
+  "bleedout.hud.bleeding": "Кровотечение: %s сек",
+  "bleedout.hud.hint.suicide": "ЛКМ чтобы умереть",
+  "bleedout.hud.reviving": "Возрождение: %s сек"
+}

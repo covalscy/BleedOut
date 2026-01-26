@@ -32,7 +32,7 @@ public class BleedOutMod
 
     private void commonSetup(final FMLCommonSetupEvent event)
     {
-        LOGGER.info("BleedOut mod initialized");
+        // LOGGER.info("BleedOut mod initialized");
         event.enqueueWork(() -> {
             com.covalscy.bleedout.network.BleedOutNetwork.register();
         });
@@ -41,7 +41,7 @@ public class BleedOutMod
     @SubscribeEvent
     public void onServerStarting(ServerStartingEvent event)
     {
-        LOGGER.info("BleedOut mod server starting");
+        // LOGGER.info("BleedOut mod server starting");
     }
 
     @Mod.EventBusSubscriber(modid = MODID, bus = Mod.EventBusSubscriber.Bus.MOD, value = Dist.CLIENT)
@@ -50,7 +50,7 @@ public class BleedOutMod
         @SubscribeEvent
         public static void onClientSetup(net.minecraftforge.fml.event.lifecycle.FMLClientSetupEvent event)
         {
-            LOGGER.info("BleedOut mod client initialized");
+            // LOGGER.info("BleedOut mod client initialized");
         }
         
         @SubscribeEvent

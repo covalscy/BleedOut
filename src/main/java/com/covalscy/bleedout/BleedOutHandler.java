@@ -55,40 +55,40 @@ public class BleedOutHandler
             String msgId = source.getMsgId();
             UUID playerId = player.getUUID();
             
-            LOGGER.info("[BleedOut] LivingDamageEvent: Player={}, Health={}, Damage={}, Source={}, IsBleeding={}, IsDying={}", 
-                player.getName().getString(), player.getHealth(), event.getAmount(), msgId, 
-                bleedingPlayers.containsKey(playerId), dyingPlayers.containsKey(playerId));
+            // LOGGER.info("[BleedOut] LivingDamageEvent: Player={}, Health={}, Damage={}, Source={}, IsBleeding={}, IsDying={}", 
+            //     player.getName().getString(), player.getHealth(), event.getAmount(), msgId, 
+            //     bleedingPlayers.containsKey(playerId), dyingPlayers.containsKey(playerId));
             
             // Если игрок помечен как умирающий - пропускаем урон и разрешаем смерть
             if (dyingPlayers.containsKey(playerId))
             {
-                LOGGER.info("[BleedOut] Player {} is marked as dying, allowing damage", player.getName().getString());
+                // LOGGER.info("[BleedOut] Player {} is marked as dying, allowing damage", player.getName().getString());
                 return;
             }
             
             // Проверяем, не истекает ли игрок уже кровью
             if (bleedingPlayers.containsKey(playerId))
             {
-                LOGGER.info("[BleedOut] Player {} is already bleeding", player.getName().getString());
+                // LOGGER.info("[BleedOut] Player {} is already bleeding", player.getName().getString());
                 
                 // Если урон от другого игрока - разрешаем (можно добить)
                 if (source.getEntity() instanceof ServerPlayer && source.getEntity() != player)
                 {
-                    LOGGER.info("[BleedOut] Damage from other player {}, allowing kill", 
-                        ((ServerPlayer)source.getEntity()).getName().getString());
+                    // LOGGER.info("[BleedOut] Damage from other player {}, allowing kill", 
+                    //     ((ServerPlayer)source.getEntity()).getName().getString());
                     return;
                 }
                 
                 // Если это урон типа genericKill/generic - разрешаем (самоубийство через ЛКМ или истечение таймера)
                 if (msgId.equals("genericKill") || msgId.equals("generic"))
                 {
-                    LOGGER.info("[BleedOut] Generic/kill damage detected ({}), allowing death for bleeding player", msgId);
+                    // LOGGER.info("[BleedOut] Generic/kill damage detected ({}), allowing death for bleeding player", msgId);
                     return;
                 }
                 
                 // Блокируем ВСЕ остальные источники урона (регенерация, отравление и т.д.)
-                LOGGER.debug("[BleedOut] Blocking damage from {} for bleeding player {}", 
-                    msgId, player.getName().getString());
+                // LOGGER.debug("[BleedOut] Blocking damage from {} for bleeding player {}", 
+                //     msgId, player.getName().getString());
                 event.setCanceled(true);
                 return;
             }
@@ -107,13 +107,13 @@ public class BleedOutHandler
             boolean wasBleedingBefore = bleedingPlayers.containsKey(playerId);
             boolean isDying = dyingPlayers.containsKey(playerId);
             
-            LOGGER.info("[BleedOut] LivingDeathEvent: Player={}, AlreadyBleeding={}, IsDying={}, Source={}", 
-                player.getName().getString(), wasBleedingBefore, isDying, msgId);
+            // LOGGER.info("[BleedOut] LivingDeathEvent: Player={}, AlreadyBleeding={}, IsDying={}, Source={}", 
+            //     player.getName().getString(), wasBleedingBefore, isDying, msgId);
             
             // Если игрок помечен как умирающий - разрешаем смерть
             if (isDying)
             {
-                LOGGER.info("[BleedOut] Player {} is marked as dying, allowing death", player.getName().getString());
+                // LOGGER.info("[BleedOut] Player {} is marked as dying, allowing death", player.getName().getString());
                 
                 // Если игрока возрождали - отменяем возрождение и уведомляем возрождающего
                 if (revivingPlayers.containsKey(playerId))
@@ -123,8 +123,8 @@ public class BleedOutHandler
                     
                     if (reviver != null)
                     {
-                        LOGGER.info("[BleedOut] Cancelling revive for dying player {}, notifying reviver {}", 
-                            player.getName().getString(), reviver.getName().getString());
+                        // LOGGER.info("[BleedOut] Cancelling revive for dying player {}, notifying reviver {}", 
+                        //     player.getName().getString(), reviver.getName().getString());
                         
                         // Отправляем пакет возрождающему, что возрождение прервано
                         com.covalscy.bleedout.network.BleedOutNetwork.INSTANCE.sendTo(
@@ -148,7 +148,7 @@ public class BleedOutHandler
             // Если игрок был в кровотечении и это урон типа genericKill/generic - разрешаем смерть
             if (wasBleedingBefore && (msgId.equals("genericKill") || msgId.equals("generic")))
             {
-                LOGGER.info("[BleedOut] Generic/kill death for bleeding player ({}), allowing death", msgId);
+                // LOGGER.info("[BleedOut] Generic/kill death for bleeding player ({}), allowing death", msgId);
                 // Убираем игрока из всех списков
                 bleedingPlayers.remove(playerId);
                 revivingPlayers.remove(playerId);
@@ -161,7 +161,7 @@ public class BleedOutHandler
             // Проверяем, не истекает ли игрок уже кровью
             if (wasBleedingBefore)
             {
-                LOGGER.info("[BleedOut] Player {} was bleeding, allowing death", player.getName().getString());
+                // LOGGER.info("[BleedOut] Player {} was bleeding, allowing death", player.getName().getString());
                 // Если игрок уже истекает кровью, разрешаем смерть
                 bleedingPlayers.remove(playerId);
                 revivingPlayers.remove(playerId);
@@ -170,7 +170,7 @@ public class BleedOutHandler
                 return;
             }
 
-            LOGGER.info("[BleedOut] Player {} died, starting bleedout (fallback)", player.getName().getString());
+            // LOGGER.info("[BleedOut] Player {} died, starting bleedout (fallback)", player.getName().getString());
             // Отменяем смерть и начинаем кровотечение (на случай, если событие урона не сработало)
             event.setCanceled(true);
             startBleedout(player);
@@ -197,7 +197,7 @@ public class BleedOutHandler
                 
                 if (ticksLeft <= 0)
                 {
-                    LOGGER.info("[BleedOut] Bleedout time expired for player {}, killing", player.getName().getString());
+                    // LOGGER.info("[BleedOut] Bleedout time expired for player {}, killing", player.getName().getString());
                     
                     // Если игрока возрождали - отменяем возрождение и уведомляем возрождающего
                     if (revivingPlayers.containsKey(playerId))
@@ -207,8 +207,8 @@ public class BleedOutHandler
                         
                         if (reviver != null)
                         {
-                            LOGGER.info("[BleedOut] Cancelling revive for expired bleedout player {}, notifying reviver {}", 
-                                player.getName().getString(), reviver.getName().getString());
+                            // LOGGER.info("[BleedOut] Cancelling revive for expired bleedout player {}, notifying reviver {}", 
+                            //     player.getName().getString(), reviver.getName().getString());
                             
                             // Отправляем пакет возрождающему, что возрождение прервано
                             com.covalscy.bleedout.network.BleedOutNetwork.INSTANCE.sendTo(
@@ -238,7 +238,7 @@ public class BleedOutHandler
                     // Восстанавливаем позу перед смертью
                     player.setForcedPose(null);
                     
-                    LOGGER.info("[BleedOut] Dealing lethal damage to player {}", player.getName().getString());
+                    // LOGGER.info("[BleedOut] Dealing lethal damage to player {}", player.getName().getString());
                     player.hurt(player.damageSources().genericKill(), Float.MAX_VALUE);
                     
                     // Удаляем флаг умирания после нанесения урона
@@ -253,8 +253,8 @@ public class BleedOutHandler
                     Pose currentPose = player.getPose();
                     if (currentPose != Pose.SWIMMING)
                     {
-                        LOGGER.debug("[BleedOut] Setting forced pose to SWIMMING for player {} (was {}), ticksLeft={}", 
-                            player.getName().getString(), currentPose, ticksLeft);
+                        // LOGGER.debug("[BleedOut] Setting forced pose to SWIMMING for player {} (was {}), ticksLeft={}", 
+                        //     player.getName().getString(), currentPose, ticksLeft);
                         player.setForcedPose(Pose.SWIMMING);
                         // Также устанавливаем обычную позу для синхронизации
                         player.setPose(Pose.SWIMMING);
@@ -314,9 +314,9 @@ public class BleedOutHandler
                     // Логируем каждые 20 тиков (1 секунда) для отладки
                     if (ticksLeft % 20 == 0)
                     {
-                        LOGGER.info("[BleedOut] Player {} bleeding: {} ticks left ({} sec), pose={}, health={}, deltaMovement={}", 
-                            player.getName().getString(), ticksLeft, ticksLeft / 20, player.getPose(), 
-                            player.getHealth(), player.getDeltaMovement());
+                        // LOGGER.info("[BleedOut] Player {} bleeding: {} ticks left ({} sec), pose={}, health={}, deltaMovement={}", 
+                        //     player.getName().getString(), ticksLeft, ticksLeft / 20, player.getPose(), 
+                        //     player.getHealth(), player.getDeltaMovement());
                     }
                 }
             }
@@ -354,7 +354,7 @@ public class BleedOutHandler
                 if (reviveData.ticksLeft <= 0)
                 {
                     // Возрождение завершено
-                    LOGGER.info("[BleedOut] Revive completed for player {}", player.getName().getString());
+                    // LOGGER.info("[BleedOut] Revive completed for player {}", player.getName().getString());
                     revivingPlayers.remove(playerId);
                     
                     // Отправляем пакет возрождающему, что возрождение завершено
@@ -384,8 +384,8 @@ public class BleedOutHandler
                 if (currentPose != Pose.SWIMMING)
                 {
                     // Поза была сброшена - восстанавливаем принудительно
-                    LOGGER.debug("[BleedOut] Pose was reset to {} for player {}, restoring forced SWIMMING", 
-                        currentPose, player.getName().getString());
+                    // LOGGER.debug("[BleedOut] Pose was reset to {} for player {}, restoring forced SWIMMING", 
+                    //     currentPose, player.getName().getString());
                     player.setForcedPose(Pose.SWIMMING);
                 }
                 
@@ -414,8 +414,8 @@ public class BleedOutHandler
             {
                 // Начинаем возрождение (одно нажатие ПКМ)
                 int reviveTicks = Config.reviveTime * 20;
-                LOGGER.info("[BleedOut] Starting revive: {} reviving {} ({} ticks)", 
-                    interactor.getName().getString(), targetPlayer.getName().getString(), reviveTicks);
+                // LOGGER.info("[BleedOut] Starting revive: {} reviving {} ({} ticks)", 
+                //     interactor.getName().getString(), targetPlayer.getName().getString(), reviveTicks);
                 revivingPlayers.put(targetPlayer.getUUID(), new ReviveData(interactor.getUUID(), reviveTicks));
                 
                 // Отправляем пакет возрождающему о начале возрождения
@@ -437,25 +437,25 @@ public class BleedOutHandler
         // Проверяем, не начали ли мы уже кровотечение для этого игрока
         if (bleedingPlayers.containsKey(playerId))
         {
-            LOGGER.warn("[BleedOut] Player {} already in bleeding list! Current ticks: {}", 
-                player.getName().getString(), bleedingPlayers.get(playerId));
+            // LOGGER.warn("[BleedOut] Player {} already in bleeding list! Current ticks: {}", 
+            //     player.getName().getString(), bleedingPlayers.get(playerId));
             return;
         }
         
-        LOGGER.info("[BleedOut] Starting bleedout for player {} (bleedoutTime={}s)", 
-            player.getName().getString(), Config.bleedoutTime);
+        // LOGGER.info("[BleedOut] Starting bleedout for player {} (bleedoutTime={}s)", 
+        //     player.getName().getString(), Config.bleedoutTime);
         
         // Конвертируем секунды в тики (20 тиков = 1 секунда)
         int bleedoutTicks = Config.bleedoutTime * 20;
         bleedingPlayers.put(playerId, bleedoutTicks);
         poseSetForPlayers.put(playerId, false); // Пока не установили позу
-        LOGGER.info("[BleedOut] Added player {} to bleeding list with {} ticks", 
-            player.getName().getString(), bleedoutTicks);
+        // LOGGER.info("[BleedOut] Added player {} to bleeding list with {} ticks", 
+        //     player.getName().getString(), bleedoutTicks);
         
         // Устанавливаем здоровье на 0.5, чтобы игрок был близок к смерти
         player.setHealth(0.5f);
-        LOGGER.info("[BleedOut] Set health to 0.5 for player {} (was {})", 
-            player.getName().getString(), player.getHealth());
+        // LOGGER.info("[BleedOut] Set health to 0.5 for player {} (was {})", 
+        //     player.getName().getString(), player.getHealth());
         
         // Устанавливаем позу ползания (лежащий) - используем setForcedPose как в PlayerRevive
         Pose oldPose = player.getPose();
@@ -474,8 +474,8 @@ public class BleedOutHandler
             player
         );
         
-        LOGGER.info("[BleedOut] Set forced pose to SWIMMING for player {} (was {}), also set normal pose and PersistentData flag, sent packet", 
-            player.getName().getString(), oldPose);
+        // LOGGER.info("[BleedOut] Set forced pose to SWIMMING for player {} (was {}), also set normal pose and PersistentData flag, sent packet", 
+        //     player.getName().getString(), oldPose);
         
         // Игрок может медленно ползать, не блокируем движение полностью
         player.setJumping(false);
@@ -492,7 +492,7 @@ public class BleedOutHandler
         UUID playerId = player.getUUID();
         if (bleedingPlayers.containsKey(playerId))
         {
-            LOGGER.info("[BleedOut] Killing bleeding player {} (suicide request from client)", player.getName().getString());
+            // LOGGER.info("[BleedOut] Killing bleeding player {} (suicide request from client)", player.getName().getString());
             
             // Помечаем игрока как умирающего
             dyingPlayers.put(playerId, true);
@@ -513,7 +513,7 @@ public class BleedOutHandler
             player.setForcedPose(null);
             
             // Убиваем игрока
-            LOGGER.info("[BleedOut] Dealing lethal damage to player {} (suicide)", player.getName().getString());
+            // LOGGER.info("[BleedOut] Dealing lethal damage to player {} (suicide)", player.getName().getString());
             player.hurt(player.damageSources().genericKill(), Float.MAX_VALUE);
             
             // Удаляем флаг умирания после нанесения урона
@@ -534,7 +534,7 @@ public class BleedOutHandler
     private static void revivePlayer(ServerPlayer player)
     {
         UUID playerId = player.getUUID();
-        LOGGER.info("[BleedOut] Reviving player {}", player.getName().getString());
+        // LOGGER.info("[BleedOut] Reviving player {}", player.getName().getString());
         
         // Убираем из кровотечения
         bleedingPlayers.remove(playerId);
@@ -549,16 +549,16 @@ public class BleedOutHandler
             player
         );
         
-        LOGGER.info("[BleedOut] Removed player {} from bleeding list and PersistentData flag, sent packet", player.getName().getString());
+        // LOGGER.info("[BleedOut] Removed player {} from bleeding list and PersistentData flag, sent packet", player.getName().getString());
         
         // Восстанавливаем здоровье
         player.setHealth(player.getMaxHealth() * 0.5f); // Восстанавливаем до половины здоровья
-        LOGGER.info("[BleedOut] Restored health to {} for player {}", player.getHealth(), player.getName().getString());
+        // LOGGER.info("[BleedOut] Restored health to {} for player {}", player.getHealth(), player.getName().getString());
         
         // Возвращаем нормальную позу - снимаем принудительную позу
         player.setForcedPose(null);
         player.setPose(Pose.STANDING);
-        LOGGER.info("[BleedOut] Removed forced pose and set to STANDING for player {}", player.getName().getString());
+        // LOGGER.info("[BleedOut] Removed forced pose and set to STANDING for player {}", player.getName().getString());
         
         // Движение разблокируется автоматически, так как игрок больше не в списке кровотечения
     }
