@@ -12,28 +12,24 @@ public class BleedOutUpdatePacket
 {
     private final UUID playerId;
     private final boolean isBleeding;
-    private final int timeLeft;
 
-    public BleedOutUpdatePacket(UUID playerId, boolean isBleeding, int timeLeft)
+    public BleedOutUpdatePacket(UUID playerId, boolean isBleeding)
     {
         this.playerId = playerId;
         this.isBleeding = isBleeding;
-        this.timeLeft = timeLeft;
     }
 
     public void encode(FriendlyByteBuf buffer)
     {
         buffer.writeUUID(playerId);
         buffer.writeBoolean(isBleeding);
-        buffer.writeInt(timeLeft);
     }
 
     public static BleedOutUpdatePacket decode(FriendlyByteBuf buffer)
     {
         return new BleedOutUpdatePacket(
             buffer.readUUID(),
-            buffer.readBoolean(),
-            buffer.readInt()
+            buffer.readBoolean()
         );
     }
 

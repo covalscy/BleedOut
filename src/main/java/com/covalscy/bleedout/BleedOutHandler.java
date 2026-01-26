@@ -231,7 +231,7 @@ public class BleedOutHandler
                     
                     // Отправляем пакет на клиент для синхронизации состояния
                     com.covalscy.bleedout.network.BleedOutNetwork.sendToClient(
-                        new com.covalscy.bleedout.network.BleedOutUpdatePacket(playerId, false, 0),
+                        new com.covalscy.bleedout.network.BleedOutUpdatePacket(playerId, false),
                         player
                     );
                     
@@ -306,7 +306,7 @@ public class BleedOutHandler
                     if (ticksLeft % 5 == 0)
                     {
                         com.covalscy.bleedout.network.BleedOutNetwork.sendToClient(
-                            new com.covalscy.bleedout.network.BleedOutUpdatePacket(playerId, true, ticksLeft),
+                            new com.covalscy.bleedout.network.BleedOutUpdatePacket(playerId, true),
                             player
                         );
                     }
@@ -468,9 +468,8 @@ public class BleedOutHandler
         player.getPersistentData().putBoolean("bleedout:bleeding", true);
         
         // Отправляем пакет на клиент для синхронизации состояния
-        int timeLeft = bleedingPlayers.get(playerId);
         com.covalscy.bleedout.network.BleedOutNetwork.sendToClient(
-            new com.covalscy.bleedout.network.BleedOutUpdatePacket(playerId, true, timeLeft),
+            new com.covalscy.bleedout.network.BleedOutUpdatePacket(playerId, true),
             player
         );
         
@@ -505,7 +504,7 @@ public class BleedOutHandler
             
             // Отправляем пакет на клиент для синхронизации состояния
             com.covalscy.bleedout.network.BleedOutNetwork.sendToClient(
-                new com.covalscy.bleedout.network.BleedOutUpdatePacket(playerId, false, 0),
+                new com.covalscy.bleedout.network.BleedOutUpdatePacket(playerId, false),
                 player
             );
             
@@ -545,7 +544,7 @@ public class BleedOutHandler
         
         // Отправляем пакет на клиент для синхронизации состояния
         com.covalscy.bleedout.network.BleedOutNetwork.sendToClient(
-            new com.covalscy.bleedout.network.BleedOutUpdatePacket(playerId, false, 0),
+            new com.covalscy.bleedout.network.BleedOutUpdatePacket(playerId, false),
             player
         );
         

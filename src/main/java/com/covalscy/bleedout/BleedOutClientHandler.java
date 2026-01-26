@@ -20,6 +20,8 @@ import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.ModList;
 
+import java.util.Set;
+
 /**
  * Оверлей для отображения состояния кровотечения и прогресс-бара самоубийства
  */
@@ -263,6 +265,55 @@ class BleedOutOverlay implements IGuiOverlay
 @Mod.EventBusSubscriber(modid = BleedOutMod.MODID, bus = Mod.EventBusSubscriber.Bus.FORGE, value = Dist.CLIENT)
 class BleedOutClientHandler
 {
+    // === ОПТИМИЗАЦИЯ: Кешируем классы для рефлексии ===
+    private static Class<?> cachedIGunClass = null;
+    private static Class<?> cachedShootKeyClass = null;
+    private static boolean tackModChecked = false;
+    
+    // === ОПТИМИЗАЦИЯ: Set для быстрой проверки гранат ===
+    private static final Set<String> GRENADE_IDS = Set.of(
+        "superbwarfare:rgo_grenade",
+        "superbwarfare:hand_grenade",
+        "superbwarfare:claymore_mine",
+        "superbwarfare:tm_62",
+        "superbwarfare:c4_bomb",
+        "superbwarfare:blu_43_mine",
+        "superbwarfare:m18_smoke_grenade"
+    );
+    
+    // Инициализация кешированных классов TACZ
+    static {
+        if (ModList.get().isLoaded("tacz")) {
+            try {
+                cachedIGunClass = Class.forName("com.tacz.guns.api.item.IGun");
+                cachedShootKeyClass = Class.forName("com.tacz.guns.client.input.ShootKey");
+                tackModChecked = true;
+            } catch (ClassNotFoundException e) {
+                // TACZ не найден или версия несовместима
+                tackModChecked = false;
+            }
+        }
+    }
+    
+    // Проверка, является ли предмет оружием TACZ (оптимизированная)
+    private static boolean isTACZGun(ItemStack stack) {
+        if (!tackModChecked || cachedIGunClass == null) return false;
+        return cachedIGunClass.isInstance(stack.getItem());
+    }
+    
+    // Проверка, является ли предмет гранатой SuperbWarfare (оптимизированная)
+    private static boolean isSuperWarfareGrenade(ItemStack stack) {
+        if (!ModList.get().isLoaded("superbwarfare")) return false;
+        ResourceLocation itemId = BuiltInRegistries.ITEM.getKey(stack.getItem());
+        return GRENADE_IDS.contains(itemId.toString());
+    }
+    
+    // Проверка, является ли предмет оружием SuperbWarfare (не гранатой)
+    private static boolean isSuperWarfareWeapon(ItemStack stack) {
+        if (!ModList.get().isLoaded("superbwarfare")) return false;
+        String className = stack.getItem().getClass().getName();
+        return className.contains("superbwarfare") && !isSuperWarfareGrenade(stack);
+    }
     
     // Блокируем все клики мышью (атаку, использование предметов, взаимодействие) при кровотечении
     @SubscribeEvent(priority = EventPriority.HIGHEST)
@@ -299,62 +350,20 @@ class BleedOutClientHandler
             ItemStack mainHand = player.getMainHandItem();
             
             // Проверяем, держит ли игрок что-то из SuperbWarfare в главной руке
-            if (ModList.get().isLoaded("superbwarfare"))
+            if (isSuperWarfareGrenade(mainHand))
             {
-                // Получаем ID предмета в главной руке
-                ResourceLocation mainHandId = BuiltInRegistries.ITEM.getKey(mainHand.getItem());
-                String mainHandIdStr = mainHandId.toString();
-                
-                // Проверяем, является ли предмет в главной руке оружием SuperbWarfare
-                String mainHandClass = mainHand.getItem().getClass().getName();
-                
-                if (mainHandClass.contains("superbwarfare"))
+                // Для гранаты разрешаем только ЛКМ (button 0)
+                if (event.getButton() != 0)
                 {
-                    // Проверяем, является ли это гранатой (только для главной руки)
-                    boolean isGrenade = mainHandIdStr.equals("superbwarfare:rgo_grenade") ||
-                                       mainHandIdStr.equals("superbwarfare:hand_grenade") ||
-                                       mainHandIdStr.equals("superbwarfare:claymore_mine") ||
-                                       mainHandIdStr.equals("superbwarfare:tm_62") ||
-                                       mainHandIdStr.equals("superbwarfare:c4_bomb") ||
-                                       mainHandIdStr.equals("superbwarfare:blu_43_mine") ||
-                                       mainHandIdStr.equals("superbwarfare:m18_smoke_grenade");
-                    
-                    if (isGrenade)
-                    {
-                        // Для гранаты разрешаем только ЛКМ (button 0)
-                        if (event.getButton() != 0) // Если не ЛКМ - блокируем
-                        {
-                            event.setCanceled(true);
-                            return;
-                        }
-                    }
-                    else
-                    {
-                        // Для остального оружия блокируем все клики
-                        event.setCanceled(true);
-                        return;
-                    }
+                    event.setCanceled(true);
+                    return;
                 }
             }
-            
-            // Проверяем, держит ли игрок оружие из TACZ в главной руке
-            if (ModList.get().isLoaded("tacz"))
+            else if (isSuperWarfareWeapon(mainHand) || isTACZGun(mainHand))
             {
-                try
-                {
-                    // Используем рефлексию для проверки IGun интерфейса
-                    Class<?> iGunClass = Class.forName("com.tacz.guns.api.item.IGun");
-                    if (iGunClass.isInstance(mainHand.getItem()))
-                    {
-                        // Блокируем все клики для TACZ оружия
-                        event.setCanceled(true);
-                        return;
-                    }
-                }
-                catch (Exception e)
-                {
-                    // Игнорируем ошибки рефлексии
-                }
+                // Для оружия блокируем все клики
+                event.setCanceled(true);
+                return;
             }
         }
     }
@@ -406,27 +415,22 @@ class BleedOutClientHandler
                 mc.options.keyJump.setDown(false);
             }
             
-            // Проверяем TACZ оружие и сбрасываем SHOOT_KEY
-            if (ModList.get().isLoaded("tacz"))
+            // Проверяем TACZ оружие и сбрасываем SHOOT_KEY (оптимизированная проверка)
+            if (tackModChecked && cachedShootKeyClass != null && isTACZGun(mainHand))
             {
                 try
                 {
-                    Class<?> iGunClass = Class.forName("com.tacz.guns.api.item.IGun");
-                    if (iGunClass.isInstance(mainHand.getItem()))
+                    // Получаем SHOOT_KEY из TACZ и принудительно "отпускаем" его
+                    Object shootKey = cachedShootKeyClass.getField("SHOOT_KEY").get(null);
+                    if (shootKey instanceof net.minecraft.client.KeyMapping keyMapping)
                     {
-                        // Получаем SHOOT_KEY из TACZ и принудительно "отпускаем" его
-                        Class<?> shootKeyClass = Class.forName("com.tacz.guns.client.input.ShootKey");
-                        Object shootKey = shootKeyClass.getField("SHOOT_KEY").get(null);
-                        if (shootKey instanceof net.minecraft.client.KeyMapping keyMapping)
-                        {
-                            // Принудительно устанавливаем состояние "не нажата"
-                            keyMapping.setDown(false);
-                        }
-                        
-                        // Также сбрасываем стандартные кнопки атаки и использования
-                        mc.options.keyAttack.setDown(false);
-                        mc.options.keyUse.setDown(false);
+                        // Принудительно устанавливаем состояние "не нажата"
+                        keyMapping.setDown(false);
                     }
+                    
+                    // Также сбрасываем стандартные кнопки атаки и использования
+                    mc.options.keyAttack.setDown(false);
+                    mc.options.keyUse.setDown(false);
                 }
                 catch (Exception e)
                 {
@@ -468,49 +472,9 @@ class BleedOutClientHandler
         if (isBleeding)
         {
             ItemStack mainHand = player.getMainHandItem();
-            boolean holdingWeapon = false;
             
-            // Проверяем TACZ оружие
-            if (ModList.get().isLoaded("tacz"))
-            {
-                try
-                {
-                    Class<?> iGunClass = Class.forName("com.tacz.guns.api.item.IGun");
-                    if (iGunClass.isInstance(mainHand.getItem()))
-                    {
-                        holdingWeapon = true;
-                    }
-                }
-                catch (Exception e)
-                {
-                    // Игнорируем ошибки рефлексии
-                }
-            }
-            
-            // Проверяем SuperbWarfare оружие (не гранаты)
-            if (!holdingWeapon && ModList.get().isLoaded("superbwarfare"))
-            {
-                ResourceLocation mainHandId = BuiltInRegistries.ITEM.getKey(mainHand.getItem());
-                String mainHandIdStr = mainHandId.toString();
-                String mainHandClass = mainHand.getItem().getClass().getName();
-                
-                if (mainHandClass.contains("superbwarfare"))
-                {
-                    // Проверяем, что это НЕ гранаты
-                    boolean isGrenade = mainHandIdStr.equals("superbwarfare:rgo_grenade") ||
-                                       mainHandIdStr.equals("superbwarfare:hand_grenade") ||
-                                       mainHandIdStr.equals("superbwarfare:claymore_mine") ||
-                                       mainHandIdStr.equals("superbwarfare:tm_62") ||
-                                       mainHandIdStr.equals("superbwarfare:c4_bomb") ||
-                                       mainHandIdStr.equals("superbwarfare:blu_43_mine") ||
-                                       mainHandIdStr.equals("superbwarfare:m18_smoke_grenade");
-                    
-                    if (!isGrenade)
-                    {
-                        holdingWeapon = true;
-                    }
-                }
-            }
+            // Оптимизированная проверка оружия
+            boolean holdingWeapon = isTACZGun(mainHand) || isSuperWarfareWeapon(mainHand);
             
             // Обрабатываем самоубийство только если НЕ держим оружие
             if (!holdingWeapon && mc.options.keyAttack.isDown())
