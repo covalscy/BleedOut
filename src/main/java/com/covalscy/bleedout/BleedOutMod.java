@@ -2,6 +2,7 @@ package com.covalscy.bleedout;
 
 import com.mojang.logging.LogUtils;
 import net.minecraftforge.api.distmarker.Dist;
+import net.minecraftforge.client.event.RegisterGuiOverlaysEvent;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.event.server.ServerStartingEvent;
 import net.minecraftforge.eventbus.api.IEventBus;
@@ -32,6 +33,9 @@ public class BleedOutMod
     private void commonSetup(final FMLCommonSetupEvent event)
     {
         LOGGER.info("BleedOut mod initialized");
+        event.enqueueWork(() -> {
+            com.covalscy.bleedout.network.BleedOutNetwork.register();
+        });
     }
 
     @SubscribeEvent
@@ -47,6 +51,12 @@ public class BleedOutMod
         public static void onClientSetup(net.minecraftforge.fml.event.lifecycle.FMLClientSetupEvent event)
         {
             LOGGER.info("BleedOut mod client initialized");
+        }
+        
+        @SubscribeEvent
+        public static void registerOverlays(RegisterGuiOverlaysEvent event)
+        {
+            event.registerAboveAll("bleedout", new BleedOutOverlay());
         }
     }
 }
