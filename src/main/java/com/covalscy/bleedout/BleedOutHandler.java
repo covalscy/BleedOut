@@ -8,8 +8,8 @@ import net.minecraft.world.entity.Pose;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraftforge.event.TickEvent;
-import net.minecraftforge.event.entity.living.LivingDamageEvent;
 import net.minecraftforge.event.entity.living.LivingDeathEvent;
+import net.minecraftforge.event.entity.living.LivingHurtEvent;
 import net.minecraftforge.event.entity.living.LivingEvent;
 import net.minecraftforge.event.entity.player.PlayerInteractEvent;
 import net.minecraftforge.eventbus.api.EventPriority;
@@ -46,76 +46,100 @@ public class BleedOutHandler
         }
     }
 
-    @SubscribeEvent(priority = EventPriority.HIGHEST)
-    public static void onLivingDamage(LivingDamageEvent event)
+    // Проверка обходных источников урона (как в PlayerRevive)
+    private static boolean doesByPass(ServerPlayer player, DamageSource source)
+    {
+        String msgId = source.getMsgId();
+        // Разрешаем урон типа genericKill/generic (самоубийство, истечение таймера)
+        if (msgId.equals("genericKill") || msgId.equals("generic"))
+            return true;
+        return false;
+    }
+
+    @SubscribeEvent
+    public static void onLivingHurt(net.minecraftforge.event.entity.living.LivingHurtEvent event)
     {
         if (event.getEntity() instanceof ServerPlayer player && !event.getEntity().level().isClientSide)
         {
             DamageSource source = event.getSource();
-            String msgId = source.getMsgId();
             UUID playerId = player.getUUID();
             
-            // LOGGER.info("[BleedOut] LivingDamageEvent: Player={}, Health={}, Damage={}, Source={}, IsBleeding={}, IsDying={}", 
-            //     player.getName().getString(), player.getHealth(), event.getAmount(), msgId, 
-            //     bleedingPlayers.containsKey(playerId), dyingPlayers.containsKey(playerId));
-            
-            // Если игрок помечен как умирающий - пропускаем урон и разрешаем смерть
+            // Если игрок помечен как умирающий - разрешаем урон
             if (dyingPlayers.containsKey(playerId))
-            {
-                // LOGGER.info("[BleedOut] Player {} is marked as dying, allowing damage", player.getName().getString());
                 return;
-            }
             
-            // Проверяем, не истекает ли игрок уже кровью
+            // Обрабатываем ТОЛЬКО игроков УЖЕ в кровотечении (как в PlayerRevive)
             if (bleedingPlayers.containsKey(playerId))
             {
-                // LOGGER.info("[BleedOut] Player {} is already bleeding", player.getName().getString());
+                // Если это обходной путь (genericKill/generic) - разрешаем урон
+                if (doesByPass(player, source))
+                    return;
                 
-                // Если урон от другого игрока - разрешаем (можно добить)
+                // Блокируем весь урон для игроков в кровотечении (как в PlayerRevive)
+                // Кроме урона от других игроков (добивание)
                 if (source.getEntity() instanceof ServerPlayer && source.getEntity() != player)
                 {
-                    // LOGGER.info("[BleedOut] Damage from other player {}, allowing kill", 
-                    //     ((ServerPlayer)source.getEntity()).getName().getString());
+                    // Разрешаем урон от других игроков (добивание)
                     return;
                 }
                 
-                // Если это урон типа genericKill/generic - разрешаем (самоубийство через ЛКМ или истечение таймера)
-                if (msgId.equals("genericKill") || msgId.equals("generic"))
-                {
-                    // LOGGER.info("[BleedOut] Generic/kill damage detected ({}), allowing death for bleeding player", msgId);
-                    return;
-                }
-                
-                // Блокируем ВСЕ остальные источники урона (регенерация, отравление и т.д.)
-                // LOGGER.debug("[BleedOut] Blocking damage from {} for bleeding player {}", 
-                //     msgId, player.getName().getString());
+                // Блокируем все остальные источники урона
                 event.setCanceled(true);
-                return;
             }
-            
-            // Не обрабатываем фатальный урон здесь - пусть идет в LivingDeathEvent
         }
     }
 
     @SubscribeEvent(priority = EventPriority.HIGHEST)
     public static void onLivingDeath(LivingDeathEvent event)
     {
-        if (event.getEntity() instanceof ServerPlayer player)
+        if (event.getEntity() instanceof ServerPlayer player && !event.getEntity().level().isClientSide)
         {
-            String msgId = event.getSource().getMsgId();
+            DamageSource source = event.getSource();
             UUID playerId = player.getUUID();
-            boolean wasBleedingBefore = bleedingPlayers.containsKey(playerId);
-            boolean isDying = dyingPlayers.containsKey(playerId);
             
-            // LOGGER.info("[BleedOut] LivingDeathEvent: Player={}, AlreadyBleeding={}, IsDying={}, Source={}", 
-            //     player.getName().getString(), wasBleedingBefore, isDying, msgId);
+            // LOGGER.info("[BleedOut] LivingDeathEvent: Player={}, IsBleeding={}, IsDying={}, Source={}", 
+            //     player.getName().getString(), bleedingPlayers.containsKey(playerId), 
+            //     dyingPlayers.containsKey(playerId), source.getMsgId());
             
-            // Если игрок помечен как умирающий - разрешаем смерть
-            if (isDying)
+            // Если это обходной путь (как в PlayerRevive) - НЕ отменяем смерть
+            if (doesByPass(player, source))
             {
-                // LOGGER.info("[BleedOut] Player {} is marked as dying, allowing death", player.getName().getString());
+                // LOGGER.info("[BleedOut] Bypass source detected, allowing death");
                 
-                // Если игрока возрождали - отменяем возрождение и уведомляем возрождающего
+                // Очищаем все флаги если игрок был в системе
+                if (bleedingPlayers.containsKey(playerId) || dyingPlayers.containsKey(playerId))
+                {
+                    // Если игрока возрождали - уведомляем возрождающего
+                    if (revivingPlayers.containsKey(playerId))
+                    {
+                        ReviveData reviveData = revivingPlayers.get(playerId);
+                        ServerPlayer reviver = player.server.getPlayerList().getPlayer(reviveData.reviverId);
+                        
+                        if (reviver != null)
+                        {
+                            com.covalscy.bleedout.network.BleedOutNetwork.INSTANCE.sendTo(
+                                new com.covalscy.bleedout.network.ReviveUpdatePacket(false, 0),
+                                reviver.connection.connection,
+                                net.minecraftforge.network.NetworkDirection.PLAY_TO_CLIENT
+                            );
+                        }
+                    }
+                    
+                    bleedingPlayers.remove(playerId);
+                    revivingPlayers.remove(playerId);
+                    poseSetForPlayers.remove(playerId);
+                    dyingPlayers.remove(playerId);
+                    player.getPersistentData().remove("bleedout:bleeding");
+                }
+                return;
+            }
+            
+            // Если игрок УЖЕ в кровотечении или умирает - разрешаем смерть (как в PlayerRevive)
+            if (bleedingPlayers.containsKey(playerId) || dyingPlayers.containsKey(playerId))
+            {
+                // LOGGER.info("[BleedOut] Player {} was bleeding/dying, allowing death", player.getName().getString());
+                
+                // Если игрока возрождали - уведомляем возрождающего
                 if (revivingPlayers.containsKey(playerId))
                 {
                     ReviveData reviveData = revivingPlayers.get(playerId);
@@ -123,10 +147,6 @@ public class BleedOutHandler
                     
                     if (reviver != null)
                     {
-                        // LOGGER.info("[BleedOut] Cancelling revive for dying player {}, notifying reviver {}", 
-                        //     player.getName().getString(), reviver.getName().getString());
-                        
-                        // Отправляем пакет возрождающему, что возрождение прервано
                         com.covalscy.bleedout.network.BleedOutNetwork.INSTANCE.sendTo(
                             new com.covalscy.bleedout.network.ReviveUpdatePacket(false, 0),
                             reviver.connection.connection,
@@ -135,44 +155,22 @@ public class BleedOutHandler
                     }
                 }
                 
-                // Очищаем все флаги
                 bleedingPlayers.remove(playerId);
                 revivingPlayers.remove(playerId);
                 poseSetForPlayers.remove(playerId);
                 dyingPlayers.remove(playerId);
                 player.getPersistentData().remove("bleedout:bleeding");
-                // Разрешаем смерть
-                return;
-            }
-            
-            // Если игрок был в кровотечении и это урон типа genericKill/generic - разрешаем смерть
-            if (wasBleedingBefore && (msgId.equals("genericKill") || msgId.equals("generic")))
-            {
-                // LOGGER.info("[BleedOut] Generic/kill death for bleeding player ({}), allowing death", msgId);
-                // Убираем игрока из всех списков
-                bleedingPlayers.remove(playerId);
-                revivingPlayers.remove(playerId);
-                poseSetForPlayers.remove(playerId);
-                player.getPersistentData().remove("bleedout:bleeding");
-                // Разрешаем смерть
-                return;
-            }
-            
-            // Проверяем, не истекает ли игрок уже кровью
-            if (wasBleedingBefore)
-            {
-                // LOGGER.info("[BleedOut] Player {} was bleeding, allowing death", player.getName().getString());
-                // Если игрок уже истекает кровью, разрешаем смерть
-                bleedingPlayers.remove(playerId);
-                revivingPlayers.remove(playerId);
-                poseSetForPlayers.remove(playerId);
-                player.getPersistentData().remove("bleedout:bleeding");
                 return;
             }
 
-            // LOGGER.info("[BleedOut] Player {} died, starting bleedout (fallback)", player.getName().getString());
-            // Отменяем смерть и начинаем кровотечение (на случай, если событие урона не сработало)
+            // LOGGER.info("[BleedOut] Player {} died, starting bleedout", player.getName().getString());
+            // Отменяем смерть и начинаем кровотечение (как в PlayerRevive)
             event.setCanceled(true);
+            
+            // Останавливаем игрока, если он был пассажиром (как в PlayerRevive)
+            if (player.isPassenger())
+                player.stopRiding();
+            
             startBleedout(player);
         }
     }
@@ -480,11 +478,68 @@ public class BleedOutHandler
         player.setJumping(false);
     }
 
+    /**
+     * API method for other mods to check if a player is bleeding.
+     * @param player The player to check
+     * @return true if the player is bleeding, false otherwise
+     */
     public static boolean isBleeding(Player player)
     {
         return bleedingPlayers.containsKey(player.getUUID());
     }
     
+    /**
+     * API method for other mods to get remaining bleedout time in ticks.
+     * @param player The player to check
+     * @return remaining ticks, or 0 if not bleeding
+     */
+    public static int getBleedoutTimeLeft(Player player)
+    {
+        return bleedingPlayers.getOrDefault(player.getUUID(), 0);
+    }
+    
+    /**
+     * API method for other mods to check if a player is being revived.
+     * @param player The player to check
+     * @return true if the player is being revived, false otherwise
+     */
+    public static boolean isBeingRevived(Player player)
+    {
+        return revivingPlayers.containsKey(player.getUUID());
+    }
+    
+    /**
+     * API method for other mods to instantly kill a player.
+     * If player is NOT bleeding: kills instantly without bleedout.
+     * If player IS bleeding: finishes them off (allows death).
+     * 
+     * @param player The player to kill
+     */
+    public static void instantKill(ServerPlayer player)
+    {
+        UUID playerId = player.getUUID();
+        
+        if (bleedingPlayers.containsKey(playerId))
+        {
+            // Игрок УЖЕ в кровотечении - добиваем
+            // LOGGER.info("[BleedOut] Instant kill for bleeding player {}", player.getName().getString());
+            killBleedingPlayer(player);
+        }
+        else
+        {
+            // Игрок НЕ в кровотечении - помечаем для bypass и убиваем моментально
+            // LOGGER.info("[BleedOut] Instant kill for non-bleeding player {}", player.getName().getString());
+            
+            // Помечаем как умирающего, чтобы bypass сработал
+            dyingPlayers.put(playerId, true);
+            
+            // Убираем принудительную позу, если была установлена
+            player.setForcedPose(null);
+            
+            // Убиваем игрока с genericKill (это bypass источник)
+            player.hurt(player.damageSources().genericKill(), Float.MAX_VALUE);
+        }
+    }
 
     public static void killBleedingPlayer(ServerPlayer player)
     {
