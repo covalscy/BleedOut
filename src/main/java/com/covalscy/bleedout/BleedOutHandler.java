@@ -87,7 +87,7 @@ public class BleedOutHandler
                 }
                 
                 // Начальная неуязвимость (первые 10 тиков = 0.5 сек) - защита от мгновенного добивания
-                if (downedTime <= 10)
+                if (downedTime <= Config.initialDamageCooldown)
                 {
                     event.setCanceled(true);
                     return;
@@ -218,8 +218,7 @@ public class BleedOutHandler
     @SubscribeEvent
     public static void onPlayerTick(TickEvent.PlayerTickEvent event)
     {
-        // PlayerRevive использует Phase.START - обрабатываем в начале тика
-        if (event.phase != TickEvent.Phase.START || event.player.level().isClientSide)
+        if (event.phase != TickEvent.Phase.END || event.player.level().isClientSide)
             return;
 
         if (event.player instanceof ServerPlayer player)

@@ -3,6 +3,7 @@ package com.covalscy.bleedout;
 import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.world.entity.player.Player;
@@ -107,6 +108,8 @@ class BleedOutOverlay implements IGuiOverlay
         int screenHeight = height;
         
         PoseStack poseStack = guiGraphics.pose();
+
+        float uiScale = (float) Math.max(0.5, Math.min(3.0, ClientConfig.hudScale));
         
         // === ОТРИСОВКА ДЛЯ КРОВОТОЧАЩЕГО ИГРОКА ===
         if (isBleeding || isCurrentlyBleeding)
@@ -119,11 +122,11 @@ class BleedOutOverlay implements IGuiOverlay
             int textWidth = mc.font.width(text);
             
             poseStack.pushPose();
-            float textScale = 0.7f; // Уменьшаем текст на 30%
+            float textScale = 0.7f * uiScale; // Базовый масштаб * масштаб из конфига
             poseStack.scale(textScale, textScale, textScale);
             // Корректируем позицию с учётом масштаба
             float scaledX = (screenWidth / 2.0f - (textWidth * textScale) / 2.0f) / textScale;
-            float scaledY = (screenHeight / 2.0f + 30) / textScale;
+            float scaledY = (screenHeight / 2.0f + (30 * uiScale)) / textScale;
             poseStack.translate(scaledX, scaledY, 0);
             guiGraphics.drawString(mc.font, text, 0, 0, 0xC0FF0000, false); // Красный с прозрачностью 75%
             poseStack.popPose();
@@ -133,10 +136,10 @@ class BleedOutOverlay implements IGuiOverlay
             int hintWidth = mc.font.width(hintText);
             
             poseStack.pushPose();
-            float hintScale = 0.6f; // Еще меньше текст
+            float hintScale = 0.6f * uiScale; // Базовый масштаб * масштаб из конфига
             poseStack.scale(hintScale, hintScale, hintScale);
             float hintX = (screenWidth / 2.0f - (hintWidth * hintScale) / 2.0f) / hintScale;
-            float hintY = (screenHeight / 2.0f + 45) / hintScale; // Ниже основного текста
+            float hintY = (screenHeight / 2.0f + (45 * uiScale)) / hintScale; // Ниже основного текста
             poseStack.translate(hintX, hintY, 0);
             guiGraphics.drawString(mc.font, hintText, 0, 0, 0x80808080, false); // Серый полупрозрачный
             poseStack.popPose();
@@ -152,10 +155,10 @@ class BleedOutOverlay implements IGuiOverlay
                 float centerY = screenHeight / 2.0f;
                 
                 // Размеры прогресс-бара (в 3 раза меньше)
-                int barWidth = 33;
-                int barHeight = 3;
+                int barWidth = Math.max(1, (int) Math.round(33 * uiScale));
+                int barHeight = Math.max(1, (int) Math.round(3 * uiScale));
                 int barX = (int)(centerX - barWidth / 2.0f);
-                int barY = (int)(centerY + 15); // Ближе к прицелу
+                int barY = (int)(centerY + (15 * uiScale)); // Ближе к прицелу
                 int progressWidth = (int)(barWidth * progress);
                 
                 // Включаем блендинг с явным указанием функций (как в minimap)
@@ -174,10 +177,11 @@ class BleedOutOverlay implements IGuiOverlay
                 }
                 
                 // Рисуем рамку (серая, менее прозрачная)
-                guiGraphics.fill(barX, barY - 1, barX + barWidth, barY, 0xC0808080); // Верх
-                guiGraphics.fill(barX, barY + barHeight, barX + barWidth, barY + barHeight + 1, 0xC0808080); // Низ
-                guiGraphics.fill(barX - 1, barY, barX, barY + barHeight, 0xC0808080); // Лево
-                guiGraphics.fill(barX + barWidth, barY, barX + barWidth + 1, barY + barHeight, 0xC0808080); // Право
+                int border = Math.max(1, (int) Math.round(1 * uiScale));
+                guiGraphics.fill(barX, barY - border, barX + barWidth, barY, 0xC0808080); // Верх
+                guiGraphics.fill(barX, barY + barHeight, barX + barWidth, barY + barHeight + border, 0xC0808080); // Низ
+                guiGraphics.fill(barX - border, barY, barX, barY + barHeight, 0xC0808080); // Лево
+                guiGraphics.fill(barX + barWidth, barY, barX + barWidth + border, barY + barHeight, 0xC0808080); // Право
                 
                 RenderSystem.disableBlend();
             }
@@ -195,10 +199,10 @@ class BleedOutOverlay implements IGuiOverlay
             int textWidth = mc.font.width(text);
             
             poseStack.pushPose();
-            float textScale = 0.7f;
+            float textScale = 0.7f * uiScale;
             poseStack.scale(textScale, textScale, textScale);
             float scaledX = (screenWidth / 2.0f - (textWidth * textScale) / 2.0f) / textScale;
-            float scaledY = (screenHeight / 2.0f + 50) / textScale;
+            float scaledY = (screenHeight / 2.0f + (50 * uiScale)) / textScale;
             poseStack.translate(scaledX, scaledY, 0);
             guiGraphics.drawString(mc.font, text, 0, 0, 0xC0FFFFFF, false); // Белый с прозрачностью 75%
             poseStack.popPose();
@@ -207,10 +211,10 @@ class BleedOutOverlay implements IGuiOverlay
             float centerX = screenWidth / 2.0f;
             float centerY = screenHeight / 2.0f;
             
-            int barWidth = 33;
-            int barHeight = 3;
+            int barWidth = Math.max(1, (int) Math.round(33 * uiScale));
+            int barHeight = Math.max(1, (int) Math.round(3 * uiScale));
             int barX = (int)(centerX - barWidth / 2.0f);
-            int barY = (int)(centerY + 65); // Ниже текста возрождения
+            int barY = (int)(centerY + (65 * uiScale)); // Ниже текста возрождения
             int progressWidth = (int)(barWidth * progress);
             
             RenderSystem.enableBlend();
@@ -228,10 +232,11 @@ class BleedOutOverlay implements IGuiOverlay
             }
             
             // Рисуем рамку (серая)
-            guiGraphics.fill(barX, barY - 1, barX + barWidth, barY, 0xC0808080);
-            guiGraphics.fill(barX, barY + barHeight, barX + barWidth, barY + barHeight + 1, 0xC0808080);
-            guiGraphics.fill(barX - 1, barY, barX, barY + barHeight, 0xC0808080);
-            guiGraphics.fill(barX + barWidth, barY, barX + barWidth + 1, barY + barHeight, 0xC0808080);
+            int border = Math.max(1, (int) Math.round(1 * uiScale));
+            guiGraphics.fill(barX, barY - border, barX + barWidth, barY, 0xC0808080);
+            guiGraphics.fill(barX, barY + barHeight, barX + barWidth, barY + barHeight + border, 0xC0808080);
+            guiGraphics.fill(barX - border, barY, barX, barY + barHeight, 0xC0808080);
+            guiGraphics.fill(barX + barWidth, barY, barX + barWidth + border, barY + barHeight, 0xC0808080);
             
             RenderSystem.disableBlend();
         }
@@ -279,6 +284,13 @@ class BleedOutClientHandler
     private static Class<?> cachedIGunClass = null;
     private static Class<?> cachedShootKeyClass = null;
     private static boolean tackModChecked = false;
+
+    // === СБРОС ПРИЦЕЛИВАНИЯ (ADS) ===
+    private static boolean superbAdsChecked = false;
+    private static java.lang.reflect.Field superbZoomField = null;
+    private static boolean taczAdsChecked = false;
+    private static java.lang.reflect.Method taczFromLocalPlayer = null;
+    private static java.lang.reflect.Method taczAimMethod = null;
     
     // === ОПТИМИЗАЦИЯ: Set для быстрой проверки гранат ===
     private static final Set<String> GRENADE_IDS = Set.of(
@@ -301,6 +313,60 @@ class BleedOutClientHandler
             } catch (ClassNotFoundException e) {
                 // TACZ не найден или версия несовместима
                 tackModChecked = false;
+            }
+        }
+    }
+
+    /**
+     * Сбрасывает прицеливание для SuperbWarfare и TACZ (клиент).
+     * Вызывается один раз при входе в кровотечение.
+     */
+    private static void resetAimingForPlayer(LocalPlayer player)
+    {
+        if (player == null)
+            return;
+
+        // SuperbWarfare: ClientEventHandler.zoom = false
+        if (ModList.get().isLoaded("superbwarfare")) {
+            if (!superbAdsChecked) {
+                superbAdsChecked = true;
+                try {
+                    Class<?> clientEventHandlerClass = Class.forName("com.atsuishio.superbwarfare.event.ClientEventHandler");
+                    java.lang.reflect.Field zoomField = clientEventHandlerClass.getDeclaredField("zoom");
+                    zoomField.setAccessible(true);
+                    superbZoomField = zoomField;
+                } catch (Exception ignored) {
+                    superbZoomField = null;
+                }
+            }
+            if (superbZoomField != null) {
+                try {
+                    superbZoomField.setBoolean(null, false);
+                } catch (Exception ignored) {
+                }
+            }
+        }
+
+        // TACZ: IClientPlayerGunOperator.fromLocalPlayer(player).aim(false)
+        if (ModList.get().isLoaded("tacz")) {
+            if (!taczAdsChecked) {
+                taczAdsChecked = true;
+                try {
+                    Class<?> clientOperatorClass = Class.forName("com.tacz.guns.api.client.gameplay.IClientPlayerGunOperator");
+                    taczFromLocalPlayer = clientOperatorClass.getDeclaredMethod("fromLocalPlayer", LocalPlayer.class);
+                    taczAimMethod = clientOperatorClass.getDeclaredMethod("aim", boolean.class);
+                } catch (Exception ignored) {
+                    taczFromLocalPlayer = null;
+                    taczAimMethod = null;
+                }
+            }
+            if (taczFromLocalPlayer != null && taczAimMethod != null) {
+                try {
+                    Object operator = taczFromLocalPlayer.invoke(null, player);
+                    if (operator != null)
+                        taczAimMethod.invoke(operator, false);
+                } catch (Exception ignored) {
+                }
             }
         }
     }
@@ -470,6 +536,8 @@ class BleedOutClientHandler
         if (isBleeding && !wasBleeding)
         {
             BleedOutOverlay.setBleedoutStartTime(System.currentTimeMillis());
+            if (player instanceof LocalPlayer localPlayer)
+                resetAimingForPlayer(localPlayer);
         }
         
         // Отслеживаем конец кровотечения
