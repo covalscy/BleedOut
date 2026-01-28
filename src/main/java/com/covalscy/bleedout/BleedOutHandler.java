@@ -165,7 +165,6 @@ public class BleedOutHandler
                     poseSetForPlayers.remove(playerId);
                     dyingPlayers.remove(playerId);
                     player.getPersistentData().remove("bleedout:bleeding");
-                    player.getPersistentData().remove("bleedout:ticksLeft");
                 }
                 return;
             }
@@ -196,7 +195,6 @@ public class BleedOutHandler
                 poseSetForPlayers.remove(playerId);
                 dyingPlayers.remove(playerId);
                 player.getPersistentData().remove("bleedout:bleeding");
-                player.getPersistentData().remove("bleedout:ticksLeft");
                 return;
             }
 
@@ -267,9 +265,8 @@ public class BleedOutHandler
                     bleedingPlayers.remove(playerId);
                     revivingPlayers.remove(playerId); // Убираем из возрождения, если было
                     poseSetForPlayers.remove(playerId);
-                    // Убираем флаги из PersistentData
+                    // Убираем флаг из PersistentData
                     player.getPersistentData().remove("bleedout:bleeding");
-                    player.getPersistentData().remove("bleedout:ticksLeft");
                     
                     // Отправляем пакет на клиент для синхронизации состояния
                     com.covalscy.bleedout.network.BleedOutNetwork.sendToClient(
@@ -501,11 +498,10 @@ public class BleedOutHandler
         poseSetForPlayers.put(playerId, true);
         
         // Устанавливаем флаг в PersistentData для синхронизации с клиентом (как в PlayerRevive)
-        int initialTicks = bleedingPlayers.get(playerId);
         player.getPersistentData().putBoolean("bleedout:bleeding", true);
-        player.getPersistentData().putInt("bleedout:ticksLeft", initialTicks);
         
         // Отправляем пакет на клиент для синхронизации состояния
+        int initialTicks = bleedingPlayers.get(playerId);
         com.covalscy.bleedout.network.BleedOutNetwork.sendToClient(
             new com.covalscy.bleedout.network.BleedOutUpdatePacket(playerId, true, initialTicks),
             player
@@ -596,7 +592,6 @@ public class BleedOutHandler
             revivingPlayers.remove(playerId);
             poseSetForPlayers.remove(playerId);
             player.getPersistentData().remove("bleedout:bleeding");
-            player.getPersistentData().remove("bleedout:ticksLeft");
             
             // Отправляем пакет на клиент для синхронизации состояния
             com.covalscy.bleedout.network.BleedOutNetwork.sendToClient(
@@ -625,9 +620,8 @@ public class BleedOutHandler
         bleedingPlayers.remove(playerId);
         poseSetForPlayers.remove(playerId);
         
-        // Убираем флаги из PersistentData для синхронизации с клиентом (как в PlayerRevive)
+        // Убираем флаг из PersistentData для синхронизации с клиентом (как в PlayerRevive)
         player.getPersistentData().remove("bleedout:bleeding");
-        player.getPersistentData().remove("bleedout:ticksLeft");
         
         // Отправляем пакет на клиент для синхронизации состояния
         com.covalscy.bleedout.network.BleedOutNetwork.sendToClient(

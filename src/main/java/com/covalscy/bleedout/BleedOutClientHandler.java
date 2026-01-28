@@ -5,7 +5,6 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
-import net.minecraft.world.entity.Pose;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import com.mojang.blaze3d.vertex.PoseStack;
@@ -347,27 +346,6 @@ class BleedOutClientHandler
         }
     }
     
-    // Устанавливаем позу ползания на клиенте (как в старой версии)
-    @SubscribeEvent
-    public static void onPlayerTick(PlayerTickEvent event)
-    {
-        if (event.phase != TickEvent.Phase.END)
-            return;
-        
-        Player player = event.player;
-        if (player == null || !player.level().isClientSide)
-            return;
-        
-        // Проверяем состояние кровотечения через PersistentData
-        boolean isBleeding = player.getPersistentData().getBoolean("bleedout:bleeding");
-        
-        // Устанавливаем позу на клиенте - ВСЕГДА если isBleeding (как в старой версии)
-        if (isBleeding && player.getPose() != Pose.SWIMMING)
-        {
-            player.setPose(Pose.SWIMMING);
-        }
-    }
-    
     // Блокируем использование оружия SuperbWarfare и TACZ при кровотечении
     @SubscribeEvent(priority = EventPriority.HIGHEST)
     public static void onMouseButton(InputEvent.MouseButton.Pre event)
@@ -400,6 +378,27 @@ class BleedOutClientHandler
                 event.setCanceled(true);
                 return;
             }
+        }
+    }
+    
+
+    @SubscribeEvent
+    public static void onPlayerTick(PlayerTickEvent event)
+    {
+        if (event.phase != TickEvent.Phase.END)
+            return;
+        
+        Player player = event.player;
+        if (player == null || !player.level().isClientSide)
+            return;
+        
+        // Проверяем состояние кровотечения через PersistentData
+        boolean isBleeding = player.getPersistentData().getBoolean("bleedout:bleeding");
+        
+        // Устанавливаем позу на клиенте - ВСЕГДА если isBleeding
+        if (isBleeding && player.getPose() != net.minecraft.world.entity.Pose.SWIMMING)
+        {
+            player.setPose(net.minecraft.world.entity.Pose.SWIMMING);
         }
     }
 
