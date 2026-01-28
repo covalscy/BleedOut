@@ -114,6 +114,17 @@ public class BleedOutHandler
                             player.connection.connection,
                             net.minecraftforge.network.NetworkDirection.PLAY_TO_CLIENT
                         );
+
+                        // Уведомляем возрождаемого
+                        ServerPlayer target = player.server.getPlayerList().getPlayer(entry.getKey());
+                        if (target != null)
+                        {
+                            com.covalscy.bleedout.network.BleedOutNetwork.INSTANCE.sendTo(
+                                new com.covalscy.bleedout.network.ReviveUpdatePacket(false, 0),
+                                target.connection.connection,
+                                net.minecraftforge.network.NetworkDirection.PLAY_TO_CLIENT
+                            );
+                        }
                         
                         // LOGGER.info("[BleedOut] Revive interrupted for {} due to reviver {} taking damage", 
                         //     entry.getKey(), playerId);
@@ -188,6 +199,20 @@ public class BleedOutHandler
                             net.minecraftforge.network.NetworkDirection.PLAY_TO_CLIENT
                         );
                     }
+
+                    // Также уведомляем самого возрождаемого (player), что прогрессбар нужно скрыть
+                    com.covalscy.bleedout.network.BleedOutNetwork.INSTANCE.sendTo(
+                        new com.covalscy.bleedout.network.ReviveUpdatePacket(false, 0),
+                        player.connection.connection,
+                        net.minecraftforge.network.NetworkDirection.PLAY_TO_CLIENT
+                    );
+
+                    // Также уведомляем самого возрождаемого (player), что прогрессбар нужно скрыть
+                    com.covalscy.bleedout.network.BleedOutNetwork.INSTANCE.sendTo(
+                        new com.covalscy.bleedout.network.ReviveUpdatePacket(false, 0),
+                        player.connection.connection,
+                        net.minecraftforge.network.NetworkDirection.PLAY_TO_CLIENT
+                    );
                 }
                 
                 bleedingPlayers.remove(playerId);
@@ -248,12 +273,19 @@ public class BleedOutHandler
                             // LOGGER.info("[BleedOut] Cancelling revive for expired bleedout player {}, notifying reviver {}", 
                             //     player.getName().getString(), reviver.getName().getString());
                             
-                            // Отправляем пакет возрождающему, что возрождение прервано
+                        // Отправляем пакет возрождающему, что возрождение прервано
                             com.covalscy.bleedout.network.BleedOutNetwork.INSTANCE.sendTo(
                                 new com.covalscy.bleedout.network.ReviveUpdatePacket(false, 0),
                                 reviver.connection.connection,
                                 net.minecraftforge.network.NetworkDirection.PLAY_TO_CLIENT
                             );
+
+                        // И возрождаемому
+                        com.covalscy.bleedout.network.BleedOutNetwork.INSTANCE.sendTo(
+                            new com.covalscy.bleedout.network.ReviveUpdatePacket(false, 0),
+                            player.connection.connection,
+                            net.minecraftforge.network.NetworkDirection.PLAY_TO_CLIENT
+                        );
                         }
                     }
                     
@@ -394,6 +426,13 @@ public class BleedOutHandler
                         reviver.connection.connection,
                         net.minecraftforge.network.NetworkDirection.PLAY_TO_CLIENT
                     );
+
+                    // И возрождаемому
+                    com.covalscy.bleedout.network.BleedOutNetwork.INSTANCE.sendTo(
+                        new com.covalscy.bleedout.network.ReviveUpdatePacket(false, 0),
+                        player.connection.connection,
+                        net.minecraftforge.network.NetworkDirection.PLAY_TO_CLIENT
+                    );
                     
                     revivePlayer(player);
                 }
@@ -454,6 +493,13 @@ public class BleedOutHandler
                 com.covalscy.bleedout.network.BleedOutNetwork.INSTANCE.sendTo(
                     new com.covalscy.bleedout.network.ReviveUpdatePacket(true, reviveTicks),
                     interactor.connection.connection,
+                    net.minecraftforge.network.NetworkDirection.PLAY_TO_CLIENT
+                );
+
+                // И возрождаемому, чтобы он видел, что его поднимают
+                com.covalscy.bleedout.network.BleedOutNetwork.INSTANCE.sendTo(
+                    new com.covalscy.bleedout.network.ReviveUpdatePacket(true, reviveTicks),
+                    targetPlayer.connection.connection,
                     net.minecraftforge.network.NetworkDirection.PLAY_TO_CLIENT
                 );
                 

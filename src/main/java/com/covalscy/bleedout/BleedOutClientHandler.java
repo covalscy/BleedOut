@@ -79,26 +79,77 @@ class BleedOutOverlay implements IGuiOverlay
             currentReviveTicks = Math.max(0, reviveStartTicks - elapsedTicks);
         }
         
-        // Отслеживаем начало кровотечения
-        if (isBleeding && !isCurrentlyBleeding)
+        // Отслеживаем начало/конец кровотечения локально
+        // Используем wasBleeding из onClientTickEnd (через wasBleedingLastTick), а не локальную переменную
+        boolean wasBleedingLast = wasBleedingLastTick();
+        
+        // Всегда читаем актуальное значение из PersistentData (может обновиться через пакет)
+        int ticksLeftFromServer = player.getPersistentData().getInt("bleedout:ticksLeft");
+        
+        if (isBleeding && !wasBleedingLast)
         {
-            bleedoutStartTicks = player.getPersistentData().getInt("bleedout:ticksLeft");
+            // Начало кровотечения - устанавливаем начальные значения
+            if (ticksLeftFromServer > 0)
+            {
+                bleedoutStartTicks = ticksLeftFromServer;
+            }
+            else
+            {
+                // Пакет ещё не пришёл - используем конфиг как fallback
+                bleedoutStartTicks = Config.bleedoutTime * 20;
+            }
             bleedoutStartTime = System.currentTimeMillis();
             isCurrentlyBleeding = true;
         }
-        else if (!isBleeding && isCurrentlyBleeding)
+        else if (isBleeding && wasBleedingLast)
         {
+            // Кровотечение продолжается - проверяем, не обновилось ли значение через пакет
+            // Если значение из PersistentData изменилось (пакет пришёл с задержкой), пересчитываем
+            if (ticksLeftFromServer > 0 && (bleedoutStartTicks <= 0 || ticksLeftFromServer != bleedoutStartTicks))
+            {
+                // Пакет пришёл позже или обновился - пересчитываем время начала
+                bleedoutStartTicks = ticksLeftFromServer;
+                bleedoutStartTime = System.currentTimeMillis();
+            }
+            // Если bleedoutStartTicks всё ещё 0 (пакет не пришёл), но мы уже в кровотечении - используем fallback
+            else if (bleedoutStartTicks <= 0 && bleedoutStartTime == 0)
+            {
+                bleedoutStartTicks = Config.bleedoutTime * 20;
+                bleedoutStartTime = System.currentTimeMillis();
+            }
+        }
+        else if (!isBleeding)
+        {
+            // Сбрасываем состояние кровотечения, если isBleeding стал false
             isCurrentlyBleeding = false;
             bleedoutStartTicks = 0;
+            bleedoutStartTime = 0;
         }
         
         // Вычисляем текущее время кровотечения локально
         int currentBleedoutTicks = 0;
-        if (isBleeding && bleedoutStartTicks > 0)
+        if (isBleeding)
         {
-            long elapsedMs = System.currentTimeMillis() - bleedoutStartTime;
-            int elapsedTicks = (int)(elapsedMs / 50); // 50ms = 1 tick
-            currentBleedoutTicks = Math.max(0, bleedoutStartTicks - elapsedTicks);
+            // Если bleedoutStartTicks не установлен, используем конфиг как fallback
+            int ticksToUse = bleedoutStartTicks > 0 ? bleedoutStartTicks : (Config.bleedoutTime * 20);
+            
+            if (ticksToUse > 0 && bleedoutStartTime > 0)
+            {
+                // Локальный расчёт работает - используем его
+                long elapsedMs = System.currentTimeMillis() - bleedoutStartTime;
+                int elapsedTicks = (int)(elapsedMs / 50); // 50ms = 1 tick
+                currentBleedoutTicks = Math.max(0, ticksToUse - elapsedTicks);
+            }
+            else if (ticksToUse > 0)
+            {
+                // bleedoutStartTime ещё не установлен (пакет не пришёл) - используем fallback напрямую
+                currentBleedoutTicks = ticksToUse;
+            }
+            else
+            {
+                // Последний fallback - конфиг
+                currentBleedoutTicks = Config.bleedoutTime * 20;
+            }
         }
         
         if (!isBleeding && !isCurrentlyBleeding && !isReviving)
@@ -112,7 +163,7 @@ class BleedOutOverlay implements IGuiOverlay
         float uiScale = (float) Math.max(0.5, Math.min(3.0, ClientConfig.hudScale));
         
         // === ОТРИСОВКА ДЛЯ КРОВОТОЧАЩЕГО ИГРОКА ===
-        if (isBleeding || isCurrentlyBleeding)
+        if (isBleeding)
         {
             // Используем локально вычисленное время
             int timeLeftSec = (int) Math.ceil(currentBleedoutTicks / 20.0); // Конвертируем тики в секунды, округляем вверх
@@ -126,7 +177,8 @@ class BleedOutOverlay implements IGuiOverlay
             poseStack.scale(textScale, textScale, textScale);
             // Корректируем позицию с учётом масштаба
             float scaledX = (screenWidth / 2.0f - (textWidth * textScale) / 2.0f) / textScale;
-            float scaledY = (screenHeight / 2.0f + (30 * uiScale)) / textScale;
+            // Поднимаем текст ближе к центру
+            float scaledY = (screenHeight / 2.0f + (20 * uiScale)) / textScale;
             poseStack.translate(scaledX, scaledY, 0);
             guiGraphics.drawString(mc.font, text, 0, 0, 0xC0FF0000, false); // Красный с прозрачностью 75%
             poseStack.popPose();
@@ -139,7 +191,8 @@ class BleedOutOverlay implements IGuiOverlay
             float hintScale = 0.6f * uiScale; // Базовый масштаб * масштаб из конфига
             poseStack.scale(hintScale, hintScale, hintScale);
             float hintX = (screenWidth / 2.0f - (hintWidth * hintScale) / 2.0f) / hintScale;
-            float hintY = (screenHeight / 2.0f + (45 * uiScale)) / hintScale; // Ниже основного текста
+            // Поднимаем подсказку тоже
+            float hintY = (screenHeight / 2.0f + (35 * uiScale)) / hintScale; // Ниже основного текста
             poseStack.translate(hintX, hintY, 0);
             guiGraphics.drawString(mc.font, hintText, 0, 0, 0x80808080, false); // Серый полупрозрачный
             poseStack.popPose();
@@ -158,7 +211,8 @@ class BleedOutOverlay implements IGuiOverlay
                 int barWidth = Math.max(1, (int) Math.round(33 * uiScale));
                 int barHeight = Math.max(1, (int) Math.round(3 * uiScale));
                 int barX = (int)(centerX - barWidth / 2.0f);
-                int barY = (int)(centerY + (15 * uiScale)); // Ближе к прицелу
+                // Поднимаем прогрессбар ближе к центру
+                int barY = (int)(centerY + (8 * uiScale)); // Ближе к прицелу
                 int progressWidth = (int)(barWidth * progress);
                 
                 // Включаем блендинг с явным указанием функций (как в minimap)
@@ -193,16 +247,20 @@ class BleedOutOverlay implements IGuiOverlay
             int totalReviveTicks = reviveStartTicks;
             float progress = 1.0f - ((float) currentReviveTicks / totalReviveTicks);
             int timeLeftSec = (int) Math.ceil(currentReviveTicks / 20.0);
+
+            boolean localIsBleeding = player.getPersistentData().getBoolean("bleedout:bleeding");
             
             // Отображаем текст возрождения
-            String text = net.minecraft.network.chat.Component.translatable("bleedout.hud.reviving", timeLeftSec).getString();
+            String key = localIsBleeding ? "bleedout.hud.being_revived" : "bleedout.hud.reviving";
+            String text = net.minecraft.network.chat.Component.translatable(key, timeLeftSec).getString();
             int textWidth = mc.font.width(text);
             
             poseStack.pushPose();
             float textScale = 0.7f * uiScale;
             poseStack.scale(textScale, textScale, textScale);
             float scaledX = (screenWidth / 2.0f - (textWidth * textScale) / 2.0f) / textScale;
-            float scaledY = (screenHeight / 2.0f + (50 * uiScale)) / textScale;
+            // Поднимаем текст немного выше (ближе к центру)
+            float scaledY = (screenHeight / 2.0f + (35 * uiScale)) / textScale;
             poseStack.translate(scaledX, scaledY, 0);
             guiGraphics.drawString(mc.font, text, 0, 0, 0xC0FFFFFF, false); // Белый с прозрачностью 75%
             poseStack.popPose();
@@ -214,7 +272,8 @@ class BleedOutOverlay implements IGuiOverlay
             int barWidth = Math.max(1, (int) Math.round(33 * uiScale));
             int barHeight = Math.max(1, (int) Math.round(3 * uiScale));
             int barX = (int)(centerX - barWidth / 2.0f);
-            int barY = (int)(centerY + (65 * uiScale)); // Ниже текста возрождения
+            // Поднимаем прогрессбар ближе к тексту
+            int barY = (int)(centerY + (45 * uiScale)); // Ниже текста возрождения, но выше чем было
             int progressWidth = (int)(barWidth * progress);
             
             RenderSystem.enableBlend();
@@ -532,18 +591,11 @@ class BleedOutClientHandler
         boolean isBleeding = player.getPersistentData().getBoolean("bleedout:bleeding");
         boolean wasBleeding = BleedOutOverlay.wasBleedingLastTick();
         
-        // Отслеживаем начало кровотечения
-        if (isBleeding && !wasBleeding)
+        // Отслеживаем начало кровотечения только для сброса прицеливания;
+        // сам оверлей сам определяет момент старта по своему состоянию.
+        if (isBleeding && !wasBleeding && player instanceof LocalPlayer localPlayer)
         {
-            BleedOutOverlay.setBleedoutStartTime(System.currentTimeMillis());
-            if (player instanceof LocalPlayer localPlayer)
-                resetAimingForPlayer(localPlayer);
-        }
-        
-        // Отслеживаем конец кровотечения
-        if (!isBleeding && wasBleeding)
-        {
-            BleedOutOverlay.stopBleeding();
+            resetAimingForPlayer(localPlayer);
         }
         
         // Обрабатываем ЛКМ для самоубийства (только если НЕ держим оружие)

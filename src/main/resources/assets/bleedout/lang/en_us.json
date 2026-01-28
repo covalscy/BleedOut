@@ -1,5 +1,6 @@
 {
   "bleedout.hud.bleeding": "Bleeding: %s sec",
   "bleedout.hud.hint.suicide": "Left click to die",
-  "bleedout.hud.reviving": "Reviving: %s sec"
+  "bleedout.hud.reviving": "Reviving: %s sec",
+  "bleedout.hud.being_revived": "You are being revived: %s sec"
 }
