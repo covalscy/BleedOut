@@ -18,7 +18,7 @@ echo.
 echo Build completed successfully!
 echo.
 
-set FORGE_JAR="build\libs\bleedout-1.0.2.jar"
+set FORGE_JAR="build\libs\bleedout-1.0.3.jar"
 set TARGET1="E:\Games inst\UltimMC\instances\BleedOutTestq\.minecraft\mods"
 set TARGET2="E:\Games inst\UltimMC\instances\BleedOutTest2\.minecraft\mods"
 
