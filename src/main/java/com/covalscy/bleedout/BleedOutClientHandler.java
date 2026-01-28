@@ -108,9 +108,6 @@ class BleedOutOverlay implements IGuiOverlay
         
         PoseStack poseStack = guiGraphics.pose();
         
-        // Применяем масштаб из клиентского конфига (один раз для всех элементов)
-        float hudScale = (float) ClientConfig.hudScale;
-        
         // === ОТРИСОВКА ДЛЯ КРОВОТОЧАЩЕГО ИГРОКА ===
         if (isBleeding || isCurrentlyBleeding)
         {
@@ -122,11 +119,11 @@ class BleedOutOverlay implements IGuiOverlay
             int textWidth = mc.font.width(text);
             
             poseStack.pushPose();
-            float textScale = 0.7f * hudScale; // Базовый масштаб * масштаб из конфига
+            float textScale = 0.7f; // Уменьшаем текст на 30%
             poseStack.scale(textScale, textScale, textScale);
             // Корректируем позицию с учётом масштаба
             float scaledX = (screenWidth / 2.0f - (textWidth * textScale) / 2.0f) / textScale;
-            float scaledY = (screenHeight / 2.0f + 30 * hudScale) / textScale;
+            float scaledY = (screenHeight / 2.0f + 30) / textScale;
             poseStack.translate(scaledX, scaledY, 0);
             guiGraphics.drawString(mc.font, text, 0, 0, 0xC0FF0000, false); // Красный с прозрачностью 75%
             poseStack.popPose();
@@ -136,10 +133,10 @@ class BleedOutOverlay implements IGuiOverlay
             int hintWidth = mc.font.width(hintText);
             
             poseStack.pushPose();
-            float hintScale = 0.6f * hudScale; // Базовый масштаб * масштаб из конфига
+            float hintScale = 0.6f; // Еще меньше текст
             poseStack.scale(hintScale, hintScale, hintScale);
             float hintX = (screenWidth / 2.0f - (hintWidth * hintScale) / 2.0f) / hintScale;
-            float hintY = (screenHeight / 2.0f + 45 * hudScale) / hintScale; // Ниже основного текста
+            float hintY = (screenHeight / 2.0f + 45) / hintScale; // Ниже основного текста
             poseStack.translate(hintX, hintY, 0);
             guiGraphics.drawString(mc.font, hintText, 0, 0, 0x80808080, false); // Серый полупрозрачный
             poseStack.popPose();
@@ -154,11 +151,11 @@ class BleedOutOverlay implements IGuiOverlay
                 float centerX = screenWidth / 2.0f;
                 float centerY = screenHeight / 2.0f;
                 
-                // Размеры прогресс-бара с учётом масштаба
-                int barWidth = (int)(33 * hudScale);
-                int barHeight = (int)(3 * hudScale);
+                // Размеры прогресс-бара (в 3 раза меньше)
+                int barWidth = 33;
+                int barHeight = 3;
                 int barX = (int)(centerX - barWidth / 2.0f);
-                int barY = (int)(centerY + 15 * hudScale); // Ближе к прицелу
+                int barY = (int)(centerY + 15); // Ближе к прицелу
                 int progressWidth = (int)(barWidth * progress);
                 
                 // Включаем блендинг с явным указанием функций (как в minimap)
@@ -198,10 +195,10 @@ class BleedOutOverlay implements IGuiOverlay
             int textWidth = mc.font.width(text);
             
             poseStack.pushPose();
-            float textScale = 0.7f * hudScale; // Базовый масштаб * масштаб из конфига
+            float textScale = 0.7f;
             poseStack.scale(textScale, textScale, textScale);
             float scaledX = (screenWidth / 2.0f - (textWidth * textScale) / 2.0f) / textScale;
-            float scaledY = (screenHeight / 2.0f + 50 * hudScale) / textScale;
+            float scaledY = (screenHeight / 2.0f + 50) / textScale;
             poseStack.translate(scaledX, scaledY, 0);
             guiGraphics.drawString(mc.font, text, 0, 0, 0xC0FFFFFF, false); // Белый с прозрачностью 75%
             poseStack.popPose();
@@ -210,10 +207,10 @@ class BleedOutOverlay implements IGuiOverlay
             float centerX = screenWidth / 2.0f;
             float centerY = screenHeight / 2.0f;
             
-            int barWidth = (int)(33 * hudScale);
-            int barHeight = (int)(3 * hudScale);
+            int barWidth = 33;
+            int barHeight = 3;
             int barX = (int)(centerX - barWidth / 2.0f);
-            int barY = (int)(centerY + 65 * hudScale); // Ниже текста возрождения
+            int barY = (int)(centerY + 65); // Ниже текста возрождения
             int progressWidth = (int)(barWidth * progress);
             
             RenderSystem.enableBlend();

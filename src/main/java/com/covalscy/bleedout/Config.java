@@ -46,14 +46,10 @@ public class Config
     @SubscribeEvent
     static void onLoad(final ModConfigEvent event)
     {
-        // Загружаем только когда это наш COMMON конфиг
-        if (event.getConfig().getType() == net.minecraftforge.fml.config.ModConfig.Type.COMMON)
-        {
-            bleedoutTime = BLEEDOUT_TIME.get();
-            reviveTime = REVIVE_TIME.get();
-            reviveDistance = REVIVE_DISTANCE.get();
-            suicideTime = SUICIDE_TIME.get();
-            bleedingHealth = BLEEDING_HEALTH.get();
-        }
+        bleedoutTime = BLEEDOUT_TIME.get();
+        reviveTime = REVIVE_TIME.get();
+        reviveDistance = REVIVE_DISTANCE.get();
+        suicideTime = SUICIDE_TIME.get();
+        bleedingHealth = BLEEDING_HEALTH.get();
     }
 }
