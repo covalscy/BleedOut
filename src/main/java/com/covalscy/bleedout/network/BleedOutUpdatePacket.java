@@ -1,8 +1,8 @@
 package com.covalscy.bleedout.network;
 
-import net.minecraft.client.Minecraft;
 import net.minecraft.network.FriendlyByteBuf;
-import net.minecraft.world.entity.player.Player;
+import net.minecraftforge.api.distmarker.Dist;
+import net.minecraftforge.fml.DistExecutor;
 import net.minecraftforge.network.NetworkEvent;
 
 import java.util.UUID;
@@ -12,24 +12,28 @@ public class BleedOutUpdatePacket
 {
     private final UUID playerId;
     private final boolean isBleeding;
+    private final int ticksLeft; // Оставшееся время в тиках с сервера
 
-    public BleedOutUpdatePacket(UUID playerId, boolean isBleeding)
+    public BleedOutUpdatePacket(UUID playerId, boolean isBleeding, int ticksLeft)
     {
         this.playerId = playerId;
         this.isBleeding = isBleeding;
+        this.ticksLeft = ticksLeft;
     }
 
     public void encode(FriendlyByteBuf buffer)
     {
         buffer.writeUUID(playerId);
         buffer.writeBoolean(isBleeding);
+        buffer.writeInt(ticksLeft);
     }
 
     public static BleedOutUpdatePacket decode(FriendlyByteBuf buffer)
     {
         return new BleedOutUpdatePacket(
             buffer.readUUID(),
-            buffer.readBoolean()
+            buffer.readBoolean(),
+            buffer.readInt()
         );
     }
 
@@ -38,23 +42,10 @@ public class BleedOutUpdatePacket
         context.get().enqueueWork(() -> {
             if (context.get().getDirection().getReceptionSide().isClient())
             {
-                Minecraft mc = Minecraft.getInstance();
-                if (mc.level != null)
-                {
-                    Player player = mc.level.getPlayerByUUID(playerId);
-                    if (player != null)
-                    {
-                        // Обновляем PersistentData на клиенте
-                        if (isBleeding)
-                        {
-                            player.getPersistentData().putBoolean("bleedout:bleeding", true);
-                        }
-                        else
-                        {
-                            player.getPersistentData().remove("bleedout:bleeding");
-                        }
-                    }
-                }
+                // Вызываем клиентский код только на клиенте
+                DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> 
+                    ClientPacketHandler.handleBleedOutUpdate(playerId, isBleeding, ticksLeft)
+                );
             }
         });
         context.get().setPacketHandled(true);

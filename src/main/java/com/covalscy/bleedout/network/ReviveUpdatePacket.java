@@ -1,6 +1,8 @@
 package com.covalscy.bleedout.network;
 
 import net.minecraft.network.FriendlyByteBuf;
+import net.minecraftforge.api.distmarker.Dist;
+import net.minecraftforge.fml.DistExecutor;
 import net.minecraftforge.network.NetworkEvent;
 
 import java.util.function.Supplier;
@@ -36,16 +38,10 @@ public class ReviveUpdatePacket
     {
         NetworkEvent.Context context = contextSupplier.get();
         context.enqueueWork(() -> {
-            // Обрабатываем на клиенте
-            net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
-            net.minecraft.world.entity.player.Player player = mc.player;
-            
-            if (player != null)
-            {
-                // Сохраняем данные о возрождении в PersistentData
-                player.getPersistentData().putBoolean("bleedout:reviving", packet.isReviving);
-                player.getPersistentData().putInt("bleedout:reviveTicks", packet.ticksLeft);
-            }
+            // Вызываем клиентский код только на клиенте
+            DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> 
+                ClientPacketHandler.handleReviveUpdate(packet.isReviving, packet.ticksLeft)
+            );
         });
         context.setPacketHandled(true);
     }

@@ -30,19 +30,30 @@ public class Config
             .comment("Время удержания ЛКМ для самоубийства в секундах")
             .defineInRange("suicideTime", 3, 1, 10);
 
+    public static final ForgeConfigSpec.IntValue BLEEDING_HEALTH = BUILDER
+            .comment("Health in half-hearts when downed (10 = 5 hearts)")
+            .comment("Здоровье в половинках сердец когда игрок лежит (10 = 5 сердец)")
+            .defineInRange("bleedingHealth", 10, 1, 20);
+
     static final ForgeConfigSpec SPEC = BUILDER.build();
 
     public static int bleedoutTime;
     public static int reviveTime;
     public static double reviveDistance;
     public static int suicideTime;
+    public static int bleedingHealth;
 
     @SubscribeEvent
     static void onLoad(final ModConfigEvent event)
     {
-        bleedoutTime = BLEEDOUT_TIME.get();
-        reviveTime = REVIVE_TIME.get();
-        reviveDistance = REVIVE_DISTANCE.get();
-        suicideTime = SUICIDE_TIME.get();
+        // Загружаем только когда это наш COMMON конфиг
+        if (event.getConfig().getType() == net.minecraftforge.fml.config.ModConfig.Type.COMMON)
+        {
+            bleedoutTime = BLEEDOUT_TIME.get();
+            reviveTime = REVIVE_TIME.get();
+            reviveDistance = REVIVE_DISTANCE.get();
+            suicideTime = SUICIDE_TIME.get();
+            bleedingHealth = BLEEDING_HEALTH.get();
+        }
     }
 }

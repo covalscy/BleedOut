@@ -5,6 +5,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.world.entity.Pose;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import com.mojang.blaze3d.vertex.PoseStack;
@@ -28,6 +29,9 @@ import java.util.Set;
 class BleedOutOverlay implements IGuiOverlay
 {
     private static int leftClickHoldTicks = 0; // Таймер зажатия ЛКМ
+    
+    // Локальное отслеживание времени кровотечения
+    private static int bleedoutStartTicks = 0; // Начальное количество тиков кровотечения с сервера
     private static long bleedoutStartTime = 0; // Время начала кровотечения в миллисекундах
     private static boolean wasBleeding = false;
     private static boolean isCurrentlyBleeding = false;
@@ -75,45 +79,55 @@ class BleedOutOverlay implements IGuiOverlay
             currentReviveTicks = Math.max(0, reviveStartTicks - elapsedTicks);
         }
         
-        if (!isBleeding && !isCurrentlyBleeding && !isReviving)
-            return;
-        
-        // Обновляем состояние
+        // Отслеживаем начало кровотечения
         if (isBleeding && !isCurrentlyBleeding)
         {
+            bleedoutStartTicks = player.getPersistentData().getInt("bleedout:ticksLeft");
             bleedoutStartTime = System.currentTimeMillis();
             isCurrentlyBleeding = true;
         }
         else if (!isBleeding && isCurrentlyBleeding)
         {
             isCurrentlyBleeding = false;
+            bleedoutStartTicks = 0;
         }
+        
+        // Вычисляем текущее время кровотечения локально
+        int currentBleedoutTicks = 0;
+        if (isBleeding && bleedoutStartTicks > 0)
+        {
+            long elapsedMs = System.currentTimeMillis() - bleedoutStartTime;
+            int elapsedTicks = (int)(elapsedMs / 50); // 50ms = 1 tick
+            currentBleedoutTicks = Math.max(0, bleedoutStartTicks - elapsedTicks);
+        }
+        
+        if (!isBleeding && !isCurrentlyBleeding && !isReviving)
+            return;
 
         int screenWidth = width;
         int screenHeight = height;
         
         PoseStack poseStack = guiGraphics.pose();
         
+        // Применяем масштаб из клиентского конфига (один раз для всех элементов)
+        float hudScale = (float) ClientConfig.hudScale;
+        
         // === ОТРИСОВКА ДЛЯ КРОВОТОЧАЩЕГО ИГРОКА ===
         if (isBleeding || isCurrentlyBleeding)
         {
-            // Вычисляем оставшееся время в миллисекундах
-            long currentTime = System.currentTimeMillis();
-            long elapsedTime = currentTime - bleedoutStartTime;
-            int totalTimeMs = Config.bleedoutTime * 1000;
-            long timeLeftMs = Math.max(0, totalTimeMs - elapsedTime);
-            int timeLeftSec = (int) Math.ceil(timeLeftMs / 1000.0); // Округляем вверх
+            // Используем локально вычисленное время
+            int timeLeftSec = (int) Math.ceil(currentBleedoutTicks / 20.0); // Конвертируем тики в секунды, округляем вверх
             
             // Отображаем оставшееся время кровотечения (уменьшенный текст)
             String text = net.minecraft.network.chat.Component.translatable("bleedout.hud.bleeding", timeLeftSec).getString();
             int textWidth = mc.font.width(text);
             
             poseStack.pushPose();
-            float textScale = 0.7f; // Уменьшаем текст на 30%
+            float textScale = 0.7f * hudScale; // Базовый масштаб * масштаб из конфига
             poseStack.scale(textScale, textScale, textScale);
             // Корректируем позицию с учётом масштаба
             float scaledX = (screenWidth / 2.0f - (textWidth * textScale) / 2.0f) / textScale;
-            float scaledY = (screenHeight / 2.0f + 30) / textScale;
+            float scaledY = (screenHeight / 2.0f + 30 * hudScale) / textScale;
             poseStack.translate(scaledX, scaledY, 0);
             guiGraphics.drawString(mc.font, text, 0, 0, 0xC0FF0000, false); // Красный с прозрачностью 75%
             poseStack.popPose();
@@ -123,10 +137,10 @@ class BleedOutOverlay implements IGuiOverlay
             int hintWidth = mc.font.width(hintText);
             
             poseStack.pushPose();
-            float hintScale = 0.6f; // Еще меньше текст
+            float hintScale = 0.6f * hudScale; // Базовый масштаб * масштаб из конфига
             poseStack.scale(hintScale, hintScale, hintScale);
             float hintX = (screenWidth / 2.0f - (hintWidth * hintScale) / 2.0f) / hintScale;
-            float hintY = (screenHeight / 2.0f + 45) / hintScale; // Ниже основного текста
+            float hintY = (screenHeight / 2.0f + 45 * hudScale) / hintScale; // Ниже основного текста
             poseStack.translate(hintX, hintY, 0);
             guiGraphics.drawString(mc.font, hintText, 0, 0, 0x80808080, false); // Серый полупрозрачный
             poseStack.popPose();
@@ -141,11 +155,11 @@ class BleedOutOverlay implements IGuiOverlay
                 float centerX = screenWidth / 2.0f;
                 float centerY = screenHeight / 2.0f;
                 
-                // Размеры прогресс-бара (в 3 раза меньше)
-                int barWidth = 33;
-                int barHeight = 3;
+                // Размеры прогресс-бара с учётом масштаба
+                int barWidth = (int)(33 * hudScale);
+                int barHeight = (int)(3 * hudScale);
                 int barX = (int)(centerX - barWidth / 2.0f);
-                int barY = (int)(centerY + 15); // Ближе к прицелу
+                int barY = (int)(centerY + 15 * hudScale); // Ближе к прицелу
                 int progressWidth = (int)(barWidth * progress);
                 
                 // Включаем блендинг с явным указанием функций (как в minimap)
@@ -185,10 +199,10 @@ class BleedOutOverlay implements IGuiOverlay
             int textWidth = mc.font.width(text);
             
             poseStack.pushPose();
-            float textScale = 0.7f;
+            float textScale = 0.7f * hudScale; // Базовый масштаб * масштаб из конфига
             poseStack.scale(textScale, textScale, textScale);
             float scaledX = (screenWidth / 2.0f - (textWidth * textScale) / 2.0f) / textScale;
-            float scaledY = (screenHeight / 2.0f + 50) / textScale;
+            float scaledY = (screenHeight / 2.0f + 50 * hudScale) / textScale;
             poseStack.translate(scaledX, scaledY, 0);
             guiGraphics.drawString(mc.font, text, 0, 0, 0xC0FFFFFF, false); // Белый с прозрачностью 75%
             poseStack.popPose();
@@ -197,10 +211,10 @@ class BleedOutOverlay implements IGuiOverlay
             float centerX = screenWidth / 2.0f;
             float centerY = screenHeight / 2.0f;
             
-            int barWidth = 33;
-            int barHeight = 3;
+            int barWidth = (int)(33 * hudScale);
+            int barHeight = (int)(3 * hudScale);
             int barX = (int)(centerX - barWidth / 2.0f);
-            int barY = (int)(centerY + 65); // Ниже текста возрождения
+            int barY = (int)(centerY + 65 * hudScale); // Ниже текста возрождения
             int progressWidth = (int)(barWidth * progress);
             
             RenderSystem.enableBlend();
@@ -333,6 +347,27 @@ class BleedOutClientHandler
         }
     }
     
+    // Устанавливаем позу ползания на клиенте (как в старой версии)
+    @SubscribeEvent
+    public static void onPlayerTick(PlayerTickEvent event)
+    {
+        if (event.phase != TickEvent.Phase.END)
+            return;
+        
+        Player player = event.player;
+        if (player == null || !player.level().isClientSide)
+            return;
+        
+        // Проверяем состояние кровотечения через PersistentData
+        boolean isBleeding = player.getPersistentData().getBoolean("bleedout:bleeding");
+        
+        // Устанавливаем позу на клиенте - ВСЕГДА если isBleeding (как в старой версии)
+        if (isBleeding && player.getPose() != Pose.SWIMMING)
+        {
+            player.setPose(Pose.SWIMMING);
+        }
+    }
+    
     // Блокируем использование оружия SuperbWarfare и TACZ при кровотечении
     @SubscribeEvent(priority = EventPriority.HIGHEST)
     public static void onMouseButton(InputEvent.MouseButton.Pre event)
@@ -365,27 +400,6 @@ class BleedOutClientHandler
                 event.setCanceled(true);
                 return;
             }
-        }
-    }
-    
-
-    @SubscribeEvent
-    public static void onPlayerTick(PlayerTickEvent event)
-    {
-        if (event.phase != TickEvent.Phase.END)
-            return;
-        
-        Player player = event.player;
-        if (player == null || !player.level().isClientSide)
-            return;
-        
-        // Проверяем состояние кровотечения через PersistentData
-        boolean isBleeding = player.getPersistentData().getBoolean("bleedout:bleeding");
-        
-        // Устанавливаем позу на клиенте - ВСЕГДА если isBleeding
-        if (isBleeding && player.getPose() != net.minecraft.world.entity.Pose.SWIMMING)
-        {
-            player.setPose(net.minecraft.world.entity.Pose.SWIMMING);
         }
     }
 

@@ -75,16 +75,51 @@ public class BleedOutHandler
                 if (doesByPass(player, source))
                     return;
                 
-                // Блокируем весь урон для игроков в кровотечении (как в PlayerRevive)
-                // Кроме урона от других игроков (добивание)
-                if (source.getEntity() instanceof ServerPlayer && source.getEntity() != player)
+                int ticksLeft = bleedingPlayers.get(playerId);
+                int bleedoutTicks = Config.bleedoutTime * 20;
+                int downedTime = bleedoutTicks - ticksLeft;
+                
+                // Если таймер истек (0 тиков осталось) - блокируем весь урон (игрок должен умереть от нашего кода)
+                if (ticksLeft <= 0)
                 {
-                    // Разрешаем урон от других игроков (добивание)
+                    event.setCanceled(true);
                     return;
                 }
                 
-                // Блокируем все остальные источники урона
-                event.setCanceled(true);
+                // Начальная неуязвимость (первые 10 тиков = 0.5 сек) - защита от мгновенного добивания
+                if (downedTime <= 10)
+                {
+                    event.setCanceled(true);
+                    return;
+                }
+                
+                // После начальной неуязвимости - разрешаем урон (игрока могут добить)
+                // НЕ блокируем урон, чтобы игрок мог быть добит другими игроками или мобами
+            }
+            
+            // Если игрок возрождает кого-то и получает урон - прерываем возрождение
+            if (revivingPlayers.values().stream().anyMatch(data -> data.reviverId.equals(playerId)))
+            {
+                // Находим кого возрождали
+                for (java.util.Map.Entry<UUID, ReviveData> entry : revivingPlayers.entrySet())
+                {
+                    if (entry.getValue().reviverId.equals(playerId))
+                    {
+                        // Прерываем возрождение
+                        revivingPlayers.remove(entry.getKey());
+                        
+                        // Уведомляем возрождающего
+                        com.covalscy.bleedout.network.BleedOutNetwork.INSTANCE.sendTo(
+                            new com.covalscy.bleedout.network.ReviveUpdatePacket(false, 0),
+                            player.connection.connection,
+                            net.minecraftforge.network.NetworkDirection.PLAY_TO_CLIENT
+                        );
+                        
+                        // LOGGER.info("[BleedOut] Revive interrupted for {} due to reviver {} taking damage", 
+                        //     entry.getKey(), playerId);
+                        break;
+                    }
+                }
             }
         }
     }
@@ -130,6 +165,7 @@ public class BleedOutHandler
                     poseSetForPlayers.remove(playerId);
                     dyingPlayers.remove(playerId);
                     player.getPersistentData().remove("bleedout:bleeding");
+                    player.getPersistentData().remove("bleedout:ticksLeft");
                 }
                 return;
             }
@@ -160,25 +196,32 @@ public class BleedOutHandler
                 poseSetForPlayers.remove(playerId);
                 dyingPlayers.remove(playerId);
                 player.getPersistentData().remove("bleedout:bleeding");
+                player.getPersistentData().remove("bleedout:ticksLeft");
                 return;
             }
 
             // LOGGER.info("[BleedOut] Player {} died, starting bleedout", player.getName().getString());
-            // Отменяем смерть и начинаем кровотечение (как в PlayerRevive)
-            event.setCanceled(true);
             
             // Останавливаем игрока, если он был пассажиром (как в PlayerRevive)
             if (player.isPassenger())
                 player.stopRiding();
             
+            // Начинаем кровотечение (добавляем в список, устанавливаем позу)
             startBleedout(player);
+            
+            // Отменяем смерть (как в PlayerRevive)
+            event.setCanceled(true);
+            
+            // Устанавливаем здоровье ПОСЛЕ отмены смерти (как в PlayerRevive)
+            player.setHealth(Config.bleedingHealth);
         }
     }
 
     @SubscribeEvent
     public static void onPlayerTick(TickEvent.PlayerTickEvent event)
     {
-        if (event.phase != TickEvent.Phase.END || event.player.level().isClientSide)
+        // PlayerRevive использует Phase.START - обрабатываем в начале тика
+        if (event.phase != TickEvent.Phase.START || event.player.level().isClientSide)
             return;
 
         if (event.player instanceof ServerPlayer player)
@@ -224,12 +267,13 @@ public class BleedOutHandler
                     bleedingPlayers.remove(playerId);
                     revivingPlayers.remove(playerId); // Убираем из возрождения, если было
                     poseSetForPlayers.remove(playerId);
-                    // Убираем флаг из PersistentData
+                    // Убираем флаги из PersistentData
                     player.getPersistentData().remove("bleedout:bleeding");
+                    player.getPersistentData().remove("bleedout:ticksLeft");
                     
                     // Отправляем пакет на клиент для синхронизации состояния
                     com.covalscy.bleedout.network.BleedOutNetwork.sendToClient(
-                        new com.covalscy.bleedout.network.BleedOutUpdatePacket(playerId, false),
+                        new com.covalscy.bleedout.network.BleedOutUpdatePacket(playerId, false, 0),
                         player
                     );
                     
@@ -259,15 +303,15 @@ public class BleedOutHandler
                         poseSetForPlayers.put(playerId, true);
                     }
                     
-                    // Блокируем регенерацию здоровья - устанавливаем здоровье обратно на 0.5
-                    if (player.getHealth() > 0.5f)
-                    {
-                        player.setHealth(0.5f);
-                    }
+                    // Блокируем регенерацию здоровья - устанавливаем здоровье обратно на 0.5, пока что не надо
+                    // if (player.getHealth() > 0.5f)
+                    // {
+                    //     player.setHealth(0.5f);
+                    // }
                     
                     // Ограничиваем скорость движения (медленное ползание)
                     var deltaMovement = player.getDeltaMovement();
-                    double maxSpeed = 0.05; // Очень медленная скорость ползания
+                    double maxSpeed = 0.01; // Очень медленная скорость ползания
                     
                     // Запрещаем прыжки (сбрасываем вертикальную скорость если она положительная)
                     if (deltaMovement.y > 0)
@@ -300,14 +344,7 @@ public class BleedOutHandler
                     // Блокируем прыжки
                     player.setJumping(false);
                     
-                    // Отправляем пакет на клиент каждые 5 тиков для синхронизации (как в PlayerRevive)
-                    if (ticksLeft % 5 == 0)
-                    {
-                        com.covalscy.bleedout.network.BleedOutNetwork.sendToClient(
-                            new com.covalscy.bleedout.network.BleedOutUpdatePacket(playerId, true),
-                            player
-                        );
-                    }
+                    
                     
                     // Логируем каждые 20 тиков (1 секунда) для отладки
                     if (ticksLeft % 20 == 0)
@@ -325,13 +362,14 @@ public class BleedOutHandler
                 ReviveData reviveData = revivingPlayers.get(playerId);
                 ServerPlayer reviver = player.server.getPlayerList().getPlayer(reviveData.reviverId);
                 
-                // Проверяем, что возрождающий игрок все еще рядом и жив
+                // Проверяем, что возрождающий игрок все еще рядом, жив и сам не в кровотечении
                 // НЕ проверяем направление взгляда - игрок может отвести экран
                 if (reviver == null || !reviver.isAlive() || 
                     reviver.distanceTo(player) > Config.reviveDistance || 
-                    !isBleeding(player))
+                    !isBleeding(player) ||
+                    isBleeding(reviver)) // Если возрождающий сам вошел в кровотечение - прерываем
                 {
-                    // Прерываем возрождение только если возрождающий отошел слишком далеко или умер
+                    // Прерываем возрождение
                     revivingPlayers.remove(playerId);
                     
                     // Отправляем пакет возрождающему, что возрождение прервано
@@ -388,10 +426,11 @@ public class BleedOutHandler
                 }
                 
                 // Блокируем регенерацию - устанавливаем здоровье обратно на 0.5
-                if (player.getHealth() > 0.5f)
-                {
-                    player.setHealth(0.5f);
-                }
+                // Отключено: игрок может получать урон и умирать во время кровотечения
+                // if (player.getHealth() > 0.5f)
+                // {
+                //     player.setHealth(0.5f);
+                // }
             }
         }
     }
@@ -404,11 +443,12 @@ public class BleedOutHandler
             event.getHand() == InteractionHand.MAIN_HAND)
         {
             // Проверяем, что цель истекает кровью, не возрождается уже, и это не сам игрок
-            // Также проверяем расстояние - игрок должен быть рядом
+            // Также проверяем расстояние и что возрождающий сам не в кровотечении
             if (isBleeding(targetPlayer) && 
                 !revivingPlayers.containsKey(targetPlayer.getUUID()) &&
                 !targetPlayer.getUUID().equals(interactor.getUUID()) &&
-                interactor.distanceTo(targetPlayer) <= Config.reviveDistance)
+                interactor.distanceTo(targetPlayer) <= Config.reviveDistance &&
+                !isBleeding(interactor)) // Игрок в кровотечении не может возрождать
             {
                 // Начинаем возрождение (одно нажатие ПКМ)
                 int reviveTicks = Config.reviveTime * 20;
@@ -450,10 +490,8 @@ public class BleedOutHandler
         // LOGGER.info("[BleedOut] Added player {} to bleeding list with {} ticks", 
         //     player.getName().getString(), bleedoutTicks);
         
-        // Устанавливаем здоровье на 0.5, чтобы игрок был близок к смерти
-        player.setHealth(0.5f);
-        // LOGGER.info("[BleedOut] Set health to 0.5 for player {} (was {})", 
-        //     player.getName().getString(), player.getHealth());
+        // Здоровье устанавливается в LivingDeathEvent ПОСЛЕ отмены смерти (как в PlayerRevive)
+        // player.setHealth() вызывается там, а не здесь
         
         // Устанавливаем позу ползания (лежащий) - используем setForcedPose как в PlayerRevive
         Pose oldPose = player.getPose();
@@ -463,11 +501,13 @@ public class BleedOutHandler
         poseSetForPlayers.put(playerId, true);
         
         // Устанавливаем флаг в PersistentData для синхронизации с клиентом (как в PlayerRevive)
+        int initialTicks = bleedingPlayers.get(playerId);
         player.getPersistentData().putBoolean("bleedout:bleeding", true);
+        player.getPersistentData().putInt("bleedout:ticksLeft", initialTicks);
         
         // Отправляем пакет на клиент для синхронизации состояния
         com.covalscy.bleedout.network.BleedOutNetwork.sendToClient(
-            new com.covalscy.bleedout.network.BleedOutUpdatePacket(playerId, true),
+            new com.covalscy.bleedout.network.BleedOutUpdatePacket(playerId, true, initialTicks),
             player
         );
         
@@ -556,10 +596,11 @@ public class BleedOutHandler
             revivingPlayers.remove(playerId);
             poseSetForPlayers.remove(playerId);
             player.getPersistentData().remove("bleedout:bleeding");
+            player.getPersistentData().remove("bleedout:ticksLeft");
             
             // Отправляем пакет на клиент для синхронизации состояния
             com.covalscy.bleedout.network.BleedOutNetwork.sendToClient(
-                new com.covalscy.bleedout.network.BleedOutUpdatePacket(playerId, false),
+                new com.covalscy.bleedout.network.BleedOutUpdatePacket(playerId, false, 0),
                 player
             );
             
@@ -575,16 +616,6 @@ public class BleedOutHandler
         }
     }
 
-    public static int getBleedoutTimeLeft(Player player)
-    {
-        UUID playerId = player.getUUID();
-        if (bleedingPlayers.containsKey(playerId))
-        {
-            return bleedingPlayers.get(playerId) / 20; // Конвертируем тики в секунды
-        }
-        return 0;
-    }
-
     private static void revivePlayer(ServerPlayer player)
     {
         UUID playerId = player.getUUID();
@@ -594,12 +625,13 @@ public class BleedOutHandler
         bleedingPlayers.remove(playerId);
         poseSetForPlayers.remove(playerId);
         
-        // Убираем флаг из PersistentData для синхронизации с клиентом (как в PlayerRevive)
+        // Убираем флаги из PersistentData для синхронизации с клиентом (как в PlayerRevive)
         player.getPersistentData().remove("bleedout:bleeding");
+        player.getPersistentData().remove("bleedout:ticksLeft");
         
         // Отправляем пакет на клиент для синхронизации состояния
         com.covalscy.bleedout.network.BleedOutNetwork.sendToClient(
-            new com.covalscy.bleedout.network.BleedOutUpdatePacket(playerId, false),
+            new com.covalscy.bleedout.network.BleedOutUpdatePacket(playerId, false, 0),
             player
         );
         
@@ -615,11 +647,6 @@ public class BleedOutHandler
         // LOGGER.info("[BleedOut] Removed forced pose and set to STANDING for player {}", player.getName().getString());
         
         // Движение разблокируется автоматически, так как игрок больше не в списке кровотечения
-    }
-
-    public static boolean isBeingRevived(Player player)
-    {
-        return revivingPlayers.containsKey(player.getUUID());
     }
 
     public static int getReviveTimeLeft(Player player)
