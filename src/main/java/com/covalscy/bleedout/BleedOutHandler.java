@@ -359,14 +359,13 @@ public class BleedOutHandler
                 ReviveData reviveData = revivingPlayers.get(playerId);
                 ServerPlayer reviver = player.server.getPlayerList().getPlayer(reviveData.reviverId);
                 
-                // Проверяем, что возрождающий игрок все еще рядом, жив и сам не в кровотечении
+                // Проверяем, что возрождающий игрок все еще рядом и жив
                 // НЕ проверяем направление взгляда - игрок может отвести экран
                 if (reviver == null || !reviver.isAlive() || 
                     reviver.distanceTo(player) > Config.reviveDistance || 
-                    !isBleeding(player) ||
-                    isBleeding(reviver)) // Если возрождающий сам вошел в кровотечение - прерываем
+                    !isBleeding(player))
                 {
-                    // Прерываем возрождение
+                    // Прерываем возрождение только если возрождающий отошел слишком далеко или умер
                     revivingPlayers.remove(playerId);
                     
                     // Отправляем пакет возрождающему, что возрождение прервано
@@ -440,12 +439,11 @@ public class BleedOutHandler
             event.getHand() == InteractionHand.MAIN_HAND)
         {
             // Проверяем, что цель истекает кровью, не возрождается уже, и это не сам игрок
-            // Также проверяем расстояние и что возрождающий сам не в кровотечении
+            // Также проверяем расстояние - игрок должен быть рядом
             if (isBleeding(targetPlayer) && 
                 !revivingPlayers.containsKey(targetPlayer.getUUID()) &&
                 !targetPlayer.getUUID().equals(interactor.getUUID()) &&
-                interactor.distanceTo(targetPlayer) <= Config.reviveDistance &&
-                !isBleeding(interactor)) // Игрок в кровотечении не может возрождать
+                interactor.distanceTo(targetPlayer) <= Config.reviveDistance)
             {
                 // Начинаем возрождение (одно нажатие ПКМ)
                 int reviveTicks = Config.reviveTime * 20;
