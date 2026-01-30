@@ -479,6 +479,14 @@ class BleedOutClientHandler
         if (mc.screen != null || player == null)
             return;
         
+        int button = event.getButton();
+        
+        // Всегда разрешаем СКМ (2), кнопку 4 (3), кнопку 5 (4) - независимо от состояния
+        if (button == 2 || button == 3 || button == 4)
+        {
+            return; // Не блокируем эти кнопки
+        }
+        
         boolean isBleeding = player.getPersistentData().getBoolean("bleedout:bleeding");
         if (isBleeding)
         {
@@ -488,7 +496,8 @@ class BleedOutClientHandler
             if (isSuperWarfareGrenade(mainHand))
             {
                 // Для гранаты разрешаем только ЛКМ (button 0)
-                if (event.getButton() != 0)
+                // ПКМ (1) блокируем, остальные (2, 3, 4) уже разрешены выше
+                if (button != 0)
                 {
                     event.setCanceled(true);
                     return;
@@ -496,9 +505,24 @@ class BleedOutClientHandler
             }
             else if (isSuperWarfareWeapon(mainHand) || isTACZGun(mainHand))
             {
-                // Для оружия блокируем все клики
-                event.setCanceled(true);
-                return;
+                // Для оружия блокируем ЛКМ (0) и ПКМ (1)
+                // СКМ (2), кнопка 4 (3), кнопка 5 (4) уже разрешены выше
+                if (button == 0 || button == 1)
+                {
+                    event.setCanceled(true);
+                    return;
+                }
+            }
+            else
+            {
+                // Если в руках нет оружия/гранат, но игрок в кровотечении
+                // Блокируем только ПКМ (1), ЛКМ (0) разрешён для самоубийства
+                // СКМ (2), кнопка 4 (3), кнопка 5 (4) уже разрешены выше
+                if (button == 1)
+                {
+                    event.setCanceled(true);
+                    return;
+                }
             }
         }
     }

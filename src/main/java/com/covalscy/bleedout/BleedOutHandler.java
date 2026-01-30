@@ -11,6 +11,7 @@ import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.event.entity.living.LivingDeathEvent;
 import net.minecraftforge.event.entity.living.LivingHurtEvent;
 import net.minecraftforge.event.entity.living.LivingEvent;
+import net.minecraftforge.event.entity.player.PlayerEvent;
 import net.minecraftforge.event.entity.player.PlayerInteractEvent;
 import net.minecraftforge.eventbus.api.EventPriority;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
@@ -504,6 +505,24 @@ public class BleedOutHandler
                 );
                 
                 event.setCanceled(true);
+            }
+        }
+    }
+
+    @SubscribeEvent
+    public static void onPlayerLoggedOut(PlayerEvent.PlayerLoggedOutEvent event)
+    {
+        if (event.getEntity() instanceof ServerPlayer player && !event.getEntity().level().isClientSide)
+        {
+            UUID playerId = player.getUUID();
+            
+            // Если игрок находится в состоянии кровотечения при выходе - убиваем его
+            if (bleedingPlayers.containsKey(playerId))
+            {
+                // LOGGER.info("[BleedOut] Player {} logged out while bleeding, killing", player.getName().getString());
+                
+                // Убиваем игрока перед отключением
+                killBleedingPlayer(player);
             }
         }
     }
