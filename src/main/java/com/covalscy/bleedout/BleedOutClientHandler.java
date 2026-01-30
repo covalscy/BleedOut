@@ -165,6 +165,45 @@ class BleedOutOverlay implements IGuiOverlay
         // === ОТРИСОВКА ДЛЯ КРОВОТОЧАЩЕГО ИГРОКА ===
         if (isBleeding)
         {
+            // Вычисляем прогресс кровотечения (0.0 = только началось, 1.0 = почти умер)
+            int totalBleedoutTicks = bleedoutStartTicks > 0 ? bleedoutStartTicks : (Config.bleedoutTime * 20);
+            float bleedoutProgress = totalBleedoutTicks > 0 ? 1.0f - ((float) currentBleedoutTicks / totalBleedoutTicks) : 0.0f;
+            bleedoutProgress = Math.max(0.0f, Math.min(1.0f, bleedoutProgress));
+            
+            // Базовое затемнение - увеличивается по мере кровотечения (от 0% до 100% прозрачности)
+            float baseDarkness = bleedoutProgress * 1.0f;
+            
+            // Эффект сердцебиения - пульсация с самого начала кровотечения
+            // Используем bleedoutProgress напрямую для pulseProgress
+            float pulseProgress = bleedoutProgress * 0.6f;
+            
+            // Используем время в миллисекундах для плавной анимации
+            long currentTime = System.currentTimeMillis();
+       
+            double heartbeatFrequency = 0.2;
+      
+            double heartbeatAmplitude = 0.1+ (pulseProgress * 0.3); 
+ 
+            double sinValue = Math.sin(currentTime * heartbeatFrequency * 0.01);
+           
+            double baseOffset = pulseProgress * 0.002; 
+            // Пульсация: от baseOffset до baseOffset + amplitude
+            double heartbeatPulse = baseOffset + (sinValue * heartbeatAmplitude);
+            
+            // Итоговое затемнение = базовое + пульсация
+            // Максимальное затемнение до 1.0 (100% непрозрачности) - полностью черный экран
+            float finalDarkness = (float) Math.max(0.0, Math.min(1.0, baseDarkness + heartbeatPulse));
+            
+            // Рендерим затемнение экрана (черный overlay)
+            // Конвертируем прозрачность (0.0-1.0) в альфа-канал (0-255 из 255)
+            int alpha = (int) (finalDarkness * 255);
+            int darkColor = (alpha << 24) | 0x000000; // ARGB формат: AARRGGBB
+            
+            RenderSystem.enableBlend();
+            RenderSystem.defaultBlendFunc();
+            guiGraphics.fill(0, 0, screenWidth, screenHeight, darkColor);
+            RenderSystem.disableBlend();
+            
             // Используем локально вычисленное время
             int timeLeftSec = (int) Math.ceil(currentBleedoutTicks / 20.0); // Конвертируем тики в секунды, округляем вверх
             
@@ -181,6 +220,18 @@ class BleedOutOverlay implements IGuiOverlay
             float scaledY = (screenHeight / 2.0f + (20 * uiScale)) / textScale;
             poseStack.translate(scaledX, scaledY, 0);
             guiGraphics.drawString(mc.font, text, 0, 0, 0xC0FF0000, false); // Красный с прозрачностью 75%
+            poseStack.popPose();
+            
+            // ВРЕМЕННО: Отладочная информация (левый верхний угол)
+            String debugText = String.format("Freq: %.2f | Amp: %.3f | Pulse: %.2f", 
+                heartbeatFrequency, heartbeatAmplitude, pulseProgress);
+            poseStack.pushPose();
+            float debugScale = 0.8f * uiScale; // Увеличиваем размер
+            poseStack.scale(debugScale, debugScale, debugScale);
+            float debugX = 10.0f / debugScale; // 10 пикселей от левого края
+            float debugY = 10.0f / debugScale; // 10 пикселей от верха
+            poseStack.translate(debugX, debugY, 0);
+            guiGraphics.drawString(mc.font, debugText, 0, 0, 0xFFFFFFFF, false); // Белый, полностью непрозрачный
             poseStack.popPose();
             
             // Отображаем подсказку "ЛКМ чтобы умереть"
