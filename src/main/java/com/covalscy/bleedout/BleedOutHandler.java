@@ -54,6 +54,9 @@ public class BleedOutHandler
         // Разрешаем урон типа genericKill/generic (самоубийство, истечение таймера)
         if (msgId.equals("genericKill") || msgId.equals("generic"))
             return true;
+        // Разрешаем урон от взрыва техники SuperbWarfare - сразу убиваем, не кладем в кровотечение
+        if (msgId.equals("vehicle_explosion") || msgId.equals("air_crash"))
+            return true;
         return false;
     }
 
