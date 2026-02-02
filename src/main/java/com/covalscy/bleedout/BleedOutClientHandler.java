@@ -6,6 +6,8 @@ import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.sounds.SoundEvents;
+import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import com.mojang.blaze3d.vertex.PoseStack;
@@ -20,6 +22,8 @@ import net.minecraftforge.eventbus.api.EventPriority;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.ModList;
+import com.mojang.logging.LogUtils;
+import org.slf4j.Logger;
 
 import java.util.Set;
 
@@ -28,6 +32,7 @@ import java.util.Set;
  */
 class BleedOutOverlay implements IGuiOverlay
 {
+    private static final Logger LOGGER = LogUtils.getLogger();
     private static int leftClickHoldTicks = 0; // Таймер зажатия ЛКМ
     
     // Локальное отслеживание времени кровотечения
@@ -40,6 +45,10 @@ class BleedOutOverlay implements IGuiOverlay
     private static int reviveStartTicks = 0; // Начальное количество тиков возрождения
     private static long reviveStartTime = 0; // Время начала возрождения в миллисекундах
     private static boolean wasReviving = false;
+    
+    // Отслеживание пульсации для воспроизведения звука
+    private static double lastSinValue = 0.0; // Предыдущее значение синуса для определения пика
+    private static long lastSoundPlayTime = 0; // Время последнего воспроизведения звука (для защиты от множественных воспроизведений)
 
     @Override
     public void render(ForgeGui gui, GuiGraphics guiGraphics, float partialTick, int width, int height)
@@ -100,6 +109,7 @@ class BleedOutOverlay implements IGuiOverlay
             }
             bleedoutStartTime = System.currentTimeMillis();
             isCurrentlyBleeding = true;
+            lastSinValue = -1.0; // Инициализируем для правильного определения первого перехода через ноль
         }
         else if (isBleeding && wasBleedingLast)
         {
@@ -124,6 +134,8 @@ class BleedOutOverlay implements IGuiOverlay
             isCurrentlyBleeding = false;
             bleedoutStartTicks = 0;
             bleedoutStartTime = 0;
+            lastSinValue = 0.0; // Сбрасываем отслеживание пульсации
+            lastSoundPlayTime = 0; // Сбрасываем таймер звука
         }
         
         // Вычисляем текущее время кровотечения локально
@@ -190,6 +202,156 @@ class BleedOutOverlay implements IGuiOverlay
             // Пульсация: от baseOffset до baseOffset + amplitude
             double heartbeatPulse = baseOffset + (sinValue * heartbeatAmplitude);
             
+            // Воспроизведение звука при достижении пика пульсации
+            // Отслеживаем переход через ноль снизу вверх (когда sinValue становится положительным)
+            if (player instanceof LocalPlayer)
+            {
+                // Проверяем переход через ноль снизу вверх
+                // Условие: sinValue стал положительным, а lastSinValue был отрицательным
+                // Используем небольшой порог для более надежного определения перехода
+                boolean crossedZeroUp = (sinValue > 0.05 && lastSinValue < -0.05);
+                
+                // Альтернативно: проверяем, когда sinValue достигает пика (близко к 1.0)
+                // Это более надежно, так как пик происходит реже
+                boolean atPeak = (sinValue > 0.9 && lastSinValue <= 0.9);
+                
+                // Используем любое из условий
+                boolean shouldPlaySound = crossedZeroUp || atPeak;
+                
+                // Проверяем, включен ли звук в конфиге
+                boolean soundEnabled = ClientConfig.enableHeartbeatSound;
+                
+                // Защита от множественных воспроизведений - минимум 500мс между звуками (частота пульсации)
+                // Используем уже существующую переменную currentTime
+                boolean enoughTimePassed = (currentTime - lastSoundPlayTime) >= 500;
+                
+                if (shouldPlaySound && enoughTimePassed && soundEnabled)
+                {
+                    // Воспроизводим звук сердцебиения
+                    // Используем громкость, зависящую от прогресса кровотечения (громче ближе к смерти)
+                    float volume = 0.6f + (pulseProgress * 0.2f); // От 0.6 до 0.8
+                    // Используем pitch для изменения тона
+                    float pitch = 1.0f; // Используем оригинальный pitch звука
+                    
+                    // Логирование для отладки (только первое воспроизведение)
+                    if (lastSoundPlayTime == 0)
+                    {
+                        LOGGER.info("[BleedOut] First heartbeat sound attempt: volume={}, pitch={}", volume, pitch);
+                        if (ModSounds.HEARTBEAT.get() != null)
+                        {
+                            LOGGER.info("[BleedOut] HEARTBEAT sound location: {}", ModSounds.HEARTBEAT.get().getLocation());
+                        }
+                        else
+                        {
+                            LOGGER.error("[BleedOut] HEARTBEAT sound is null!");
+                        }
+                    }
+                    
+                    // Используем кастомный звук сердцебиения
+                    // Увеличиваем громкость для теста
+                    float testVolume = Math.max(volume, 1.0f); // Минимум 1.0 для теста
+                    
+                    if (ModSounds.HEARTBEAT.get() != null)
+                    {
+                        boolean soundPlayed = false;
+                        String methodUsed = "none";
+                        
+                        // Способ 1: через level().playSound (стандартный способ)
+                        if (player.level() != null)
+                        {
+                            try
+                            {
+                                player.level().playSound(player, player.getX(), player.getY(), player.getZ(), 
+                                    ModSounds.HEARTBEAT.get(), SoundSource.PLAYERS, testVolume, pitch);
+                                soundPlayed = true;
+                                methodUsed = "level().playSound";
+                                if (lastSoundPlayTime == 0)
+                                {
+                                    LOGGER.info("[BleedOut] Heartbeat sound played via level().playSound");
+                                }
+                            }
+                            catch (Exception e)
+                            {
+                                if (lastSoundPlayTime == 0)
+                                {
+                                    LOGGER.error("[BleedOut] Error with level().playSound: {}", e.getMessage());
+                                }
+                            }
+                        }
+                        
+                        // Способ 2: через player.playSound (fallback)
+                        if (!soundPlayed)
+                        {
+                            try
+                            {
+                                player.playSound(ModSounds.HEARTBEAT.get(), testVolume, pitch);
+                                soundPlayed = true;
+                                methodUsed = "player.playSound";
+                                if (lastSoundPlayTime == 0)
+                                {
+                                    LOGGER.info("[BleedOut] Heartbeat sound played via player.playSound");
+                                }
+                            }
+                            catch (Exception e)
+                            {
+                                if (lastSoundPlayTime == 0)
+                                {
+                                    LOGGER.error("[BleedOut] Error with player.playSound: {}", e.getMessage());
+                                }
+                            }
+                        }
+                        
+                        // Способ 3: через SoundManager напрямую (последняя попытка)
+                        if (!soundPlayed && mc.getSoundManager() != null)
+                        {
+                            try
+                            {
+                                var soundManager = mc.getSoundManager();
+                                var soundEvent = ModSounds.HEARTBEAT.get();
+                                var soundInstance = new net.minecraft.client.resources.sounds.SimpleSoundInstance(
+                                    soundEvent,
+                                    SoundSource.PLAYERS,
+                                    testVolume,
+                                    pitch,
+                                    net.minecraft.util.RandomSource.create(),
+                                    player.getX(),
+                                    player.getY(),
+                                    player.getZ()
+                                );
+                                soundManager.play(soundInstance);
+                                soundPlayed = true;
+                                methodUsed = "SoundManager";
+                                if (lastSoundPlayTime == 0)
+                                {
+                                    LOGGER.info("[BleedOut] Heartbeat sound played via SoundManager");
+                                }
+                            }
+                            catch (Exception e)
+                            {
+                                if (lastSoundPlayTime == 0)
+                                {
+                                    LOGGER.error("[BleedOut] Error with SoundManager: {}", e.getMessage());
+                                }
+                            }
+                        }
+                        
+                        if (soundPlayed)
+                        {
+                            lastSoundPlayTime = currentTime; // Обновляем время последнего воспроизведения
+                        }
+                        else if (lastSoundPlayTime == 0)
+                        {
+                            LOGGER.error("[BleedOut] All sound playback methods failed! Check sound file.");
+                        }
+                    }
+                    else
+                    {
+                        LOGGER.error("[BleedOut] ModSounds.HEARTBEAT.get() is null!");
+                    }
+                }
+            }
+            lastSinValue = sinValue; // Сохраняем текущее значение для следующего кадра
+            
             // Итоговое затемнение = базовое + пульсация
             // Максимальное затемнение до 1.0 (100% непрозрачности) - полностью черный экран
             float finalDarkness = (float) Math.max(0.0, Math.min(1.0, baseDarkness + heartbeatPulse));
@@ -220,18 +382,6 @@ class BleedOutOverlay implements IGuiOverlay
             float scaledY = (screenHeight / 2.0f + (20 * uiScale)) / textScale;
             poseStack.translate(scaledX, scaledY, 0);
             guiGraphics.drawString(mc.font, text, 0, 0, 0xC0FF0000, false); // Красный с прозрачностью 75%
-            poseStack.popPose();
-            
-            // ВРЕМЕННО: Отладочная информация (левый верхний угол)
-            String debugText = String.format("Freq: %.2f | Amp: %.3f | Pulse: %.2f", 
-                heartbeatFrequency, heartbeatAmplitude, pulseProgress);
-            poseStack.pushPose();
-            float debugScale = 0.8f * uiScale; // Увеличиваем размер
-            poseStack.scale(debugScale, debugScale, debugScale);
-            float debugX = 10.0f / debugScale; // 10 пикселей от левого края
-            float debugY = 10.0f / debugScale; // 10 пикселей от верха
-            poseStack.translate(debugX, debugY, 0);
-            guiGraphics.drawString(mc.font, debugText, 0, 0, 0xFFFFFFFF, false); // Белый, полностью непрозрачный
             poseStack.popPose();
             
             // Отображаем подсказку "ЛКМ чтобы умереть"

@@ -25,6 +25,10 @@ public class BleedOutMod
 
         modEventBus.addListener(this::commonSetup);
 
+        // Регистрируем звуки
+        ModSounds.REGISTRY.register(modEventBus);
+        LOGGER.info("[BleedOut] Registered sound registry");
+
         MinecraftForge.EVENT_BUS.register(this);
 
         context.registerConfig(ModConfig.Type.COMMON, Config.SPEC);
@@ -51,7 +55,15 @@ public class BleedOutMod
         @SubscribeEvent
         public static void onClientSetup(net.minecraftforge.fml.event.lifecycle.FMLClientSetupEvent event)
         {
-            // LOGGER.info("BleedOut mod client initialized");
+            // Проверяем, что звук зарегистрирован
+            if (ModSounds.HEARTBEAT.get() != null)
+            {
+                LOGGER.info("[BleedOut] Heartbeat sound registered successfully: {}", ModSounds.HEARTBEAT.get().getLocation());
+            }
+            else
+            {
+                LOGGER.error("[BleedOut] Heartbeat sound is null during client setup!");
+            }
         }
         
         @SubscribeEvent

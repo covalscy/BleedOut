@@ -15,9 +15,15 @@ public class ClientConfig
             .comment("Масштаб интерфейса HUD (текст и прогресс-бары)")
             .defineInRange("hudScale", 1.5, 0.5, 3.0);
 
+    public static final ForgeConfigSpec.BooleanValue ENABLE_HEARTBEAT_SOUND = BUILDER
+            .comment("Enable heartbeat sound during bleeding")
+            .comment("Включить звук сердцебиения при кровотечении")
+            .define("enableHeartbeatSound", true);
+
     static final ForgeConfigSpec SPEC = BUILDER.build();
 
     public static double hudScale;
+    public static boolean enableHeartbeatSound;
 
     @SubscribeEvent
     static void onLoad(final ModConfigEvent event)
@@ -29,6 +35,7 @@ public class ClientConfig
             return;
 
         hudScale = HUD_SCALE.get();
+        enableHeartbeatSound = ENABLE_HEARTBEAT_SOUND.get();
     }
 }
 

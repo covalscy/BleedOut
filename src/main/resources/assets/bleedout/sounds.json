@@ -1,0 +1,11 @@
+{
+  "heartbeat": {
+    "sounds": [
+      {
+        "name": "bleedout:heartbeat",
+        "stream": false
+      }
+    ],
+    "subtitle": "Heartbeat"
+  }
+}
