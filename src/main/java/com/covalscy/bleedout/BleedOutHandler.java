@@ -34,6 +34,8 @@ public class BleedOutHandler
     private static final Map<UUID, Boolean> poseSetForPlayers = new HashMap<>();
     // Отслеживаем игроков, которые должны умереть (флаг для предотвращения нового кровотечения)
     private static final Map<UUID, Boolean> dyingPlayers = new HashMap<>();
+    // Отслеживаем кто положил игрока в кровотечение: UUID упавшего -> UUID того, кто положил (downer)
+    private static final Map<UUID, UUID> bleedingDowners = new HashMap<>();
 
     private static class ReviveData
     {
@@ -179,6 +181,7 @@ public class BleedOutHandler
                     revivingPlayers.remove(playerId);
                     poseSetForPlayers.remove(playerId);
                     dyingPlayers.remove(playerId);
+                    bleedingDowners.remove(playerId); // Очищаем информацию о downer
                     player.getPersistentData().remove("bleedout:bleeding");
                 }
                 return;
@@ -219,10 +222,14 @@ public class BleedOutHandler
                     );
                 }
                 
+                // Отправляем информацию о килле в TAB-mod (если установлен)
+                sendKillInfoToTabMod(player, source);
+                
                 bleedingPlayers.remove(playerId);
                 revivingPlayers.remove(playerId);
                 poseSetForPlayers.remove(playerId);
                 dyingPlayers.remove(playerId);
+                bleedingDowners.remove(playerId); // Очищаем информацию о downer
                 player.getPersistentData().remove("bleedout:bleeding");
                 return;
             }
@@ -234,7 +241,8 @@ public class BleedOutHandler
                 player.stopRiding();
             
             // Начинаем кровотечение (добавляем в список, устанавливаем позу)
-            startBleedout(player);
+            // Передаем DamageSource для сохранения информации о том, кто положил игрока
+            startBleedout(player, source);
             
             // Отменяем смерть (как в PlayerRevive)
             event.setCanceled(true);
@@ -308,6 +316,13 @@ public class BleedOutHandler
                         new com.covalscy.bleedout.network.BleedOutUpdatePacket(playerId, false, 0),
                         player
                     );
+                    
+                    // Отправляем информацию о килле в TAB-mod (таймер истек - нет finisher)
+                    // Используем genericKill как источник урона (finisher = null)
+                    sendKillInfoToTabMod(player, player.damageSources().genericKill());
+                    
+                    // Очищаем информацию о downer после отправки пакета
+                    bleedingDowners.remove(playerId);
                     
                     // Восстанавливаем позу перед смертью
                     player.setForcedPose(null);
@@ -530,7 +545,7 @@ public class BleedOutHandler
         }
     }
 
-    private static void startBleedout(ServerPlayer player)
+    private static void startBleedout(ServerPlayer player, DamageSource source)
     {
         UUID playerId = player.getUUID();
         
@@ -544,6 +559,27 @@ public class BleedOutHandler
         
         // LOGGER.info("[BleedOut] Starting bleedout for player {} (bleedoutTime={}s)", 
         //     player.getName().getString(), Config.bleedoutTime);
+        
+        // Сохраняем информацию о том, кто положил игрока (downer)
+        UUID downerId = null;
+        if (source.getEntity() instanceof ServerPlayer downer) {
+            // Проверяем что это не самоубийство
+            if (!downer.getUUID().equals(playerId)) {
+                downerId = downer.getUUID();
+                bleedingDowners.put(playerId, downerId);
+                // LOGGER.info("[BleedOut] Saved downer {} for bleeding player {}", downerId, playerId);
+            }
+        }
+        // Также проверяем прямой источник урона (для снарядов)
+        else if (source.getDirectEntity() instanceof net.minecraft.world.entity.projectile.Projectile projectile) {
+            if (projectile.getOwner() instanceof ServerPlayer downer) {
+                if (!downer.getUUID().equals(playerId)) {
+                    downerId = downer.getUUID();
+                    bleedingDowners.put(playerId, downerId);
+                    // LOGGER.info("[BleedOut] Saved downer {} (from projectile) for bleeding player {}", downerId, playerId);
+                }
+            }
+        }
         
         // Конвертируем секунды в тики (20 тиков = 1 секунда)
         int bleedoutTicks = Config.bleedoutTime * 20;
@@ -664,6 +700,13 @@ public class BleedOutHandler
                 player
             );
             
+            // Отправляем информацию о килле в TAB-mod (самоубийство - нет finisher)
+            // Используем genericKill как источник урона (finisher = null)
+            sendKillInfoToTabMod(player, player.damageSources().genericKill());
+            
+            // Очищаем информацию о downer после отправки пакета
+            bleedingDowners.remove(playerId);
+            
             // Восстанавливаем позу перед смертью
             player.setForcedPose(null);
             
@@ -675,6 +718,81 @@ public class BleedOutHandler
             dyingPlayers.remove(playerId);
         }
     }
+    
+    /**
+     * Отправляет информацию о килле в TAB-mod (если установлен)
+     * @param victim Игрок, который умер
+     * @param source Источник урона при окончательной смерти
+     */
+    private static void sendKillInfoToTabMod(ServerPlayer victim, DamageSource source)
+    {
+        // Проверяем наличие TAB-mod
+        if (!ModList.get().isLoaded("customtab"))
+        {
+            return; // TAB-mod не установлен, не отправляем пакет
+        }
+        
+        UUID victimId = victim.getUUID();
+        UUID killerId = bleedingDowners.get(victimId); // Тот, кто положил игрока (downer), может быть null
+        
+        // Определяем finisher (кто добил) из DamageSource
+        UUID assistId = null;
+        String msgId = source.getMsgId();
+        
+        // Если это самоубийство или падение - finisher = null
+        // Если это genericKill (истечение таймера) - finisher = null
+        if (!msgId.equals("genericKill") && !msgId.equals("generic") && !msgId.equals("fall"))
+        {
+            // Проверяем есть ли добивший игрок
+            if (source.getEntity() instanceof ServerPlayer finisher)
+            {
+                // Проверяем что это не самоубийство
+                if (!finisher.getUUID().equals(victimId))
+                {
+                    assistId = finisher.getUUID();
+                }
+            }
+            // Также проверяем прямой источник урона (для снарядов)
+            else if (source.getDirectEntity() instanceof net.minecraft.world.entity.projectile.Projectile projectile)
+            {
+                if (projectile.getOwner() instanceof ServerPlayer finisher)
+                {
+                    if (!finisher.getUUID().equals(victimId))
+                    {
+                        assistId = finisher.getUUID();
+                    }
+                }
+            }
+        }
+        
+        // Если нет downer И нет finisher - не отправляем пакет (не было кровотечения или уже очищено)
+        // Но если есть finisher (даже без downer), отправляем для засчитывания assist
+        if (killerId == null && assistId == null)
+        {
+            // LOGGER.warn("[BleedOut] No downer and no finisher found for victim {}, skipping kill info", victimId);
+            return;
+        }
+        
+        // Отправляем информацию в TAB-mod напрямую через рефлексию
+        try
+        {
+            // Вызываем метод обработки килла в TAB-mod напрямую
+            // Передаем сервер из victim.server для доступа к игрокам
+            net.minecraft.server.MinecraftServer server = victim.server;
+            Class<?> handlerClass = Class.forName("com.covalscy.customtab.server.BleedOutKillHandler");
+            java.lang.reflect.Method handleMethod = handlerClass.getMethod("handleKill", 
+                net.minecraft.server.MinecraftServer.class, UUID.class, UUID.class, UUID.class);
+            handleMethod.invoke(null, server, victimId, killerId, assistId);
+            
+            // LOGGER.info("[BleedOut] Sent kill info to TAB-mod: victim={}, killer={}, assist={}", 
+            //     victimId, killerId, assistId);
+        }
+        catch (Exception e)
+        {
+            LOGGER.error("[BleedOut] Error sending kill info to TAB-mod: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
 
     private static void revivePlayer(ServerPlayer player)
     {
@@ -684,8 +802,7 @@ public class BleedOutHandler
         // Убираем из кровотечения
         bleedingPlayers.remove(playerId);
         poseSetForPlayers.remove(playerId);
-        
-        // Убираем флаг из PersistentData для синхронизации с клиентом (как в PlayerRevive)
+        bleedingDowners.remove(playerId); // Очищаем информацию о downer при возрождении
         player.getPersistentData().remove("bleedout:bleeding");
         
         // Отправляем пакет на клиент для синхронизации состояния
