@@ -59,6 +59,13 @@ public class BleedOutHandler
         // Разрешаем урон от взрыва техники SuperbWarfare - сразу убиваем, не кладем в кровотечение
         if (msgId.equals("vehicle_explosion") || msgId.equals("air_crash"))
             return true;
+        // Разрешаем урон от взрывов снарядов SuperbWarfare (РПГ, ракеты, танковые снаряды)
+        if (msgId.equals("projectile_explosion") || msgId.equals("custom_explosion") || 
+        msgId.equals("superbwarfare:lunge_mine") || msgId.equals("superbwarfare:mine") || msgId.equals("superbwarfare:vehicle_strike"))
+            return true;
+        // Разрешаем урон от Beast (специальное оружие SuperbWarfare)
+        if (msgId.equals("beast"))
+            return true;
         return false;
     }
 
@@ -157,6 +164,14 @@ public class BleedOutHandler
             if (doesByPass(player, source))
             {
                 // LOGGER.info("[BleedOut] Bypass source detected, allowing death");
+                
+                // Отправляем информацию о килле в TAB-mod (если установлен)
+                // Это важно для засчитывания киллов от взрывов ракет, РПГ, танковых снарядов и т.д.
+                sendKillInfoToTabMod(player, source);
+                
+                // Force dismount to prevent glitches where player is teleported back to vehicle after respawn
+                if (player.isPassenger())
+                    player.stopRiding();
                 
                 // Очищаем все флаги если игрок был в системе
                 if (bleedingPlayers.containsKey(playerId) || dyingPlayers.containsKey(playerId))
@@ -654,6 +669,10 @@ public class BleedOutHandler
      */
     public static void instantKill(ServerPlayer player)
     {
+        // Force dismount to prevent glitches
+        if (player.isPassenger())
+            player.stopRiding();
+
         UUID playerId = player.getUUID();
         
         if (bleedingPlayers.containsKey(playerId))
@@ -736,7 +755,7 @@ public class BleedOutHandler
         UUID killerId = bleedingDowners.get(victimId); // Тот, кто положил игрока (downer), может быть null
         
         // Определяем finisher (кто добил) из DamageSource
-        UUID assistId = null;
+        UUID finisherId = null;
         String msgId = source.getMsgId();
         
         // Если это самоубийство или падение - finisher = null
@@ -749,7 +768,7 @@ public class BleedOutHandler
                 // Проверяем что это не самоубийство
                 if (!finisher.getUUID().equals(victimId))
                 {
-                    assistId = finisher.getUUID();
+                    finisherId = finisher.getUUID();
                 }
             }
             // Также проверяем прямой источник урона (для снарядов)
@@ -759,17 +778,31 @@ public class BleedOutHandler
                 {
                     if (!finisher.getUUID().equals(victimId))
                     {
-                        assistId = finisher.getUUID();
+                        finisherId = finisher.getUUID();
                     }
                 }
             }
         }
         
-        // Если нет downer И нет finisher - не отправляем пакет (не было кровотечения или уже очищено)
-        // Но если есть finisher (даже без downer), отправляем для засчитывания assist
+        // Если нет downer (bypass-смерть без кровотечения), то finisher становится killer
+        UUID assistId = null;
+        if (killerId == null && finisherId != null)
+        {
+            // Bypass-смерть: игрок умер моментально от взрыва/урона
+            // Тот, кто нанес урон, становится killer
+            killerId = finisherId;
+            finisherId = null; // assist не нужен
+        }
+        else if (killerId != null && finisherId != null)
+        {
+            // Обычная смерть через кровотечение: downer = killer, finisher = assist
+            assistId = finisherId;
+        }
+        
+        // Если нет killer И нет assist - не отправляем пакет
         if (killerId == null && assistId == null)
         {
-            // LOGGER.warn("[BleedOut] No downer and no finisher found for victim {}, skipping kill info", victimId);
+            // LOGGER.warn("[BleedOut] No killer and no assist found for victim {}, skipping kill info", victimId);
             return;
         }
         
