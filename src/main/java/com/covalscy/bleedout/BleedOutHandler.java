@@ -110,41 +110,7 @@ public class BleedOutHandler
                 // НЕ блокируем урон, чтобы игрок мог быть добит другими игроками или мобами
             }
             
-            // Если игрок возрождает кого-то и получает урон - прерываем возрождение
-            if (revivingPlayers.values().stream().anyMatch(data -> data.reviverId.equals(playerId)))
-            {
-                // Находим кого возрождали
-                for (java.util.Map.Entry<UUID, ReviveData> entry : revivingPlayers.entrySet())
-                {
-                    if (entry.getValue().reviverId.equals(playerId))
-                    {
-                        // Прерываем возрождение
-                        revivingPlayers.remove(entry.getKey());
-                        
-                        // Уведомляем возрождающего
-                        com.covalscy.bleedout.network.BleedOutNetwork.INSTANCE.sendTo(
-                            new com.covalscy.bleedout.network.ReviveUpdatePacket(false, 0),
-                            player.connection.connection,
-                            net.minecraftforge.network.NetworkDirection.PLAY_TO_CLIENT
-                        );
-
-                        // Уведомляем возрождаемого
-                        ServerPlayer target = player.server.getPlayerList().getPlayer(entry.getKey());
-                        if (target != null)
-                        {
-                            com.covalscy.bleedout.network.BleedOutNetwork.INSTANCE.sendTo(
-                                new com.covalscy.bleedout.network.ReviveUpdatePacket(false, 0),
-                                target.connection.connection,
-                                net.minecraftforge.network.NetworkDirection.PLAY_TO_CLIENT
-                            );
-                        }
-                        
-                        // LOGGER.info("[BleedOut] Revive interrupted for {} due to reviver {} taking damage", 
-                        //     entry.getKey(), playerId);
-                        break;
-                    }
-                }
-            }
+            // Получение урона возрождающим больше НЕ прерывает процесс возрождения.
         }
     }
 
