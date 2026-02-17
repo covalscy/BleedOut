@@ -43,6 +43,9 @@ public class KnockedTeammateRenderer {
         if (mc.level == null || mc.player == null)
             return;
 
+        if (!ClientConfig.enableKnockedTeammateRender)
+            return;
+
         Player localPlayer = mc.player;
         Team localTeam = localPlayer.getTeam();
 

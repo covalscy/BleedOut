@@ -20,10 +20,16 @@ public class ClientConfig
             .comment("Включить звук сердцебиения при кровотечении")
             .define("enableHeartbeatSound", true);
 
+    public static final ForgeConfigSpec.BooleanValue ENABLE_KNOCKED_TEAMMATE_RENDER = BUILDER
+            .comment("Enable knocked teammate icon rendering in world")
+            .comment("Включить рендер иконки нокнутых союзников в мире")
+            .define("enableKnockedTeammateRender", true);
+
     static final ForgeConfigSpec SPEC = BUILDER.build();
 
     public static double hudScale;
     public static boolean enableHeartbeatSound;
+    public static boolean enableKnockedTeammateRender;
 
     @SubscribeEvent
     static void onLoad(final ModConfigEvent event)
@@ -36,6 +42,7 @@ public class ClientConfig
 
         hudScale = HUD_SCALE.get();
         enableHeartbeatSound = ENABLE_HEARTBEAT_SOUND.get();
+        enableKnockedTeammateRender = ENABLE_KNOCKED_TEAMMATE_RENDER.get();
     }
 }
 
