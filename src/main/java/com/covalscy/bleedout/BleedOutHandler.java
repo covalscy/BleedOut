@@ -27,6 +27,10 @@ import java.util.UUID;
 public class BleedOutHandler
 {
     private static final Logger LOGGER = LogUtils.getLogger();
+    private static final String MINIMAP_MODID = "covalscy_minimap";
+    private static final int MINIMAP_POINTS_KNOCK = 30;
+    private static final int MINIMAP_POINTS_REVIVE_ASSIST = 20;
+    private static final int MINIMAP_POINTS_FINISH = 15;
     private static final Map<UUID, Integer> bleedingPlayers = new HashMap<>();
     // Ключ - UUID возрождаемого игрока, Значение - пара (UUID возрождающего, тики до завершения)
     private static final Map<UUID, ReviveData> revivingPlayers = new HashMap<>();
@@ -436,6 +440,9 @@ public class BleedOutHandler
 
                     // Начисляем assist сразу в момент успешного поднятия
                     sendReviveAssistToTabMod(player, reviver);
+
+                    // Начисляем очки в MinimapMod за успешное поднятие
+                    addPointsToMinimap(reviver, MINIMAP_POINTS_REVIVE_ASSIST, "revive_assist");
                     
                     revivePlayer(player);
                 }
@@ -564,6 +571,13 @@ public class BleedOutHandler
                     // LOGGER.info("[BleedOut] Saved downer {} (from projectile) for bleeding player {}", downerId, playerId);
                 }
             }
+        }
+
+        // Начисляем очки за нок в MinimapMod
+        if (downerId != null)
+        {
+            ServerPlayer downerPlayer = player.server.getPlayerList().getPlayer(downerId);
+            addPointsToMinimap(downerPlayer, MINIMAP_POINTS_KNOCK, "knock");
         }
         
         // Конвертируем секунды в тики (20 тиков = 1 секунда)
@@ -753,6 +767,14 @@ public class BleedOutHandler
                 }
             }
         }
+
+        // Очки за добивание нокнутого игрока в MinimapMod: +15 тому, кто добил.
+        // Засчитываем только если у жертвы был downer (т.е. смерть реально после нока).
+        if (finisherId != null && bleedingDowners.containsKey(victimId))
+        {
+            ServerPlayer finisherPlayer = victim.server.getPlayerList().getPlayer(finisherId);
+            addPointsToMinimap(finisherPlayer, MINIMAP_POINTS_FINISH, "finish_knocked");
+        }
         
         // Если нет downer (bypass-смерть без кровотечения), то finisher становится killer
         UUID assistId = null;
@@ -836,6 +858,41 @@ public class BleedOutHandler
         catch (Exception e)
         {
             LOGGER.error("[BleedOut] Error sending revive assist to TAB-mod: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * Начисляет очки в MinimapMod через DamageTracker.addPoints(player, points).
+     * Если MinimapMod не установлен — ничего не делает.
+     */
+    private static void addPointsToMinimap(ServerPlayer player, int points, String reason)
+    {
+        if (player == null || points <= 0)
+        {
+            return;
+        }
+
+        // Не отправляем ничего, если мод не установлен
+        if (!ModList.get().isLoaded(MINIMAP_MODID))
+        {
+            return;
+        }
+
+        try
+        {
+            Class<?> damageTrackerClass = Class.forName("com.covalscy.minimap.kits.DamageTracker");
+            java.lang.reflect.Method addPointsMethod = damageTrackerClass.getMethod(
+                "addPoints",
+                net.minecraft.world.entity.player.Player.class,
+                int.class
+            );
+
+            addPointsMethod.invoke(null, player, points);
+        }
+        catch (Exception e)
+        {
+            LOGGER.error("[BleedOut] Error sending points to MinimapMod (reason=" + reason + "): " + e.getMessage());
             e.printStackTrace();
         }
     }
