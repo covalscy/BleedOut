@@ -433,6 +433,9 @@ public class BleedOutHandler
                         player.connection.connection,
                         net.minecraftforge.network.NetworkDirection.PLAY_TO_CLIENT
                     );
+
+                    // Начисляем assist сразу в момент успешного поднятия
+                    sendReviveAssistToTabMod(player, reviver);
                     
                     revivePlayer(player);
                 }
@@ -523,6 +526,7 @@ public class BleedOutHandler
                 // Убиваем игрока перед отключением
                 killBleedingPlayer(player);
             }
+
         }
     }
 
@@ -764,7 +768,7 @@ public class BleedOutHandler
             // Обычная смерть через кровотечение: downer = killer, finisher = assist
             assistId = finisherId;
         }
-        
+
         // Если нет killer И нет assist - не отправляем пакет
         if (killerId == null && assistId == null)
         {
@@ -789,6 +793,49 @@ public class BleedOutHandler
         catch (Exception e)
         {
             LOGGER.error("[BleedOut] Error sending kill info to TAB-mod: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * Начисляет assist в TAB-mod сразу при успешном поднятии игрока.
+     * Используем текущий интеграционный хендлер TAB через рефлексию.
+     */
+    private static void sendReviveAssistToTabMod(ServerPlayer revived, ServerPlayer reviver)
+    {
+        if (revived == null || reviver == null)
+        {
+            return;
+        }
+
+        // Проверяем наличие TAB-mod
+        if (!ModList.get().isLoaded("customtab"))
+        {
+            return;
+        }
+
+        UUID revivedId = revived.getUUID();
+        UUID reviverId = reviver.getUUID();
+
+        // Защита от некорректного кейса (сам себя поднял)
+        if (revivedId.equals(reviverId))
+        {
+            return;
+        }
+
+        try
+        {
+            net.minecraft.server.MinecraftServer server = revived.server;
+            Class<?> handlerClass = Class.forName("com.covalscy.customtab.server.BleedOutKillHandler");
+            java.lang.reflect.Method handleMethod = handlerClass.getMethod("handleKill",
+                net.minecraft.server.MinecraftServer.class, UUID.class, UUID.class, UUID.class);
+
+            // killer = null, assist = reviver: ассист без привязки к отдельному киллу в этом моде
+            handleMethod.invoke(null, server, revivedId, null, reviverId);
+        }
+        catch (Exception e)
+        {
+            LOGGER.error("[BleedOut] Error sending revive assist to TAB-mod: " + e.getMessage());
             e.printStackTrace();
         }
     }
