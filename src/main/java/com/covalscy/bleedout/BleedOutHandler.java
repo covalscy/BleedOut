@@ -293,7 +293,7 @@ public class BleedOutHandler
                     player.getPersistentData().remove("bleedout:bleeding");
                     
                     // Отправляем пакет на клиент для синхронизации состояния
-                    com.covalscy.bleedout.network.BleedOutNetwork.sendToClient(
+                    com.covalscy.bleedout.network.BleedOutNetwork.sendToTrackingAndSelf(
                         new com.covalscy.bleedout.network.BleedOutUpdatePacket(playerId, false, 0),
                         player
                     );
@@ -584,7 +584,7 @@ public class BleedOutHandler
         
         // Отправляем пакет на клиент для синхронизации состояния
         int initialTicks = bleedingPlayers.get(playerId);
-        com.covalscy.bleedout.network.BleedOutNetwork.sendToClient(
+        com.covalscy.bleedout.network.BleedOutNetwork.sendToTrackingAndSelf(
             new com.covalscy.bleedout.network.BleedOutUpdatePacket(playerId, true, initialTicks),
             player
         );
@@ -680,7 +680,7 @@ public class BleedOutHandler
             player.getPersistentData().remove("bleedout:bleeding");
             
             // Отправляем пакет на клиент для синхронизации состояния
-            com.covalscy.bleedout.network.BleedOutNetwork.sendToClient(
+            com.covalscy.bleedout.network.BleedOutNetwork.sendToTrackingAndSelf(
                 new com.covalscy.bleedout.network.BleedOutUpdatePacket(playerId, false, 0),
                 player
             );
@@ -805,7 +805,7 @@ public class BleedOutHandler
         player.getPersistentData().remove("bleedout:bleeding");
         
         // Отправляем пакет на клиент для синхронизации состояния
-        com.covalscy.bleedout.network.BleedOutNetwork.sendToClient(
+        com.covalscy.bleedout.network.BleedOutNetwork.sendToTrackingAndSelf(
             new com.covalscy.bleedout.network.BleedOutUpdatePacket(playerId, false, 0),
             player
         );

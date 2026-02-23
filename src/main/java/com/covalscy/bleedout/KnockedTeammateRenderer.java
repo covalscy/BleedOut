@@ -5,7 +5,6 @@ import com.mojang.blaze3d.vertex.*;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.resources.ResourceLocation;
-import net.minecraft.world.entity.Pose;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.scores.Team;
@@ -110,22 +109,11 @@ public class KnockedTeammateRenderer {
 
     /**
      * Проверяет, является ли игрок "нокнутым" (в состоянии кровотечения).
-     * Использует несколько способов определения:
-     * 1. PersistentData "bleedout:bleeding" (самый надежный, если синхронизирован)
-     * 2. Поза SWIMMING на земле и не в воде (визуальное определение)
+     * Используем только синхронизированное сервером состояние через PersistentData,
+     * чтобы не ловить ложные срабатывания на обычную лежачую позу.
      */
     private static boolean isPlayerKnocked(Player player) {
-        // Способ 1: PersistentData (если сервер синхронизировал)
-        if (player.getPersistentData().getBoolean("bleedout:bleeding")) {
-            return true;
-        }
-
-        // Способ 2: Поза SWIMMING на земле, не в воде — вероятно нокнут
-        if (player.getPose() == Pose.SWIMMING && !player.isInWater() && !player.isSwimming() && player.onGround()) {
-            return true;
-        }
-
-        return false;
+        return player.getPersistentData().getBoolean("bleedout:bleeding");
     }
 
     /**
