@@ -125,6 +125,45 @@ public class BleedOutHandler
         {
             DamageSource source = event.getSource();
             UUID playerId = player.getUUID();
+
+            // Если игрок умирает, находясь в технике/любом транспорте,
+            // всегда пропускаем в обычную смерть без bleedout.
+            if (player.isPassenger())
+            {
+                // Снимаем с транспорта, чтобы исключить глитчи после респавна
+                player.stopRiding();
+
+                // Отправляем информацию о килле в TAB-mod (если установлен)
+                sendKillInfoToTabMod(player, source);
+
+                // Очищаем все флаги, если игрок был в системе bleedout
+                if (bleedingPlayers.containsKey(playerId) || dyingPlayers.containsKey(playerId))
+                {
+                    // Если игрока возрождали - уведомляем возрождающего
+                    if (revivingPlayers.containsKey(playerId))
+                    {
+                        ReviveData reviveData = revivingPlayers.get(playerId);
+                        ServerPlayer reviver = player.server.getPlayerList().getPlayer(reviveData.reviverId);
+
+                        if (reviver != null)
+                        {
+                            com.covalscy.bleedout.network.BleedOutNetwork.INSTANCE.sendTo(
+                                new com.covalscy.bleedout.network.ReviveUpdatePacket(false, 0),
+                                reviver.connection.connection,
+                                net.minecraftforge.network.NetworkDirection.PLAY_TO_CLIENT
+                            );
+                        }
+                    }
+
+                    bleedingPlayers.remove(playerId);
+                    revivingPlayers.remove(playerId);
+                    poseSetForPlayers.remove(playerId);
+                    dyingPlayers.remove(playerId);
+                    bleedingDowners.remove(playerId);
+                    player.getPersistentData().remove("bleedout:bleeding");
+                }
+                return;
+            }
             
             // LOGGER.info("[BleedOut] LivingDeathEvent: Player={}, IsBleeding={}, IsDying={}, Source={}", 
             //     player.getName().getString(), bleedingPlayers.containsKey(playerId), 
