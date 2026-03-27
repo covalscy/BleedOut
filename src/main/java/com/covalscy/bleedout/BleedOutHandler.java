@@ -27,6 +27,7 @@ import java.util.UUID;
 public class BleedOutHandler
 {
     private static final Logger LOGGER = LogUtils.getLogger();
+    private static final String GUNGAME_TEAM_NAME = "gungame";
     private static final String MINIMAP_MODID = "covalscy_minimap";
     private static final int MINIMAP_POINTS_KNOCK = 30;
     private static final int MINIMAP_POINTS_REVIVE_ASSIST = 20;
@@ -56,6 +57,10 @@ public class BleedOutHandler
     // Проверка обходных источников урона (как в PlayerRevive)
     private static boolean doesByPass(ServerPlayer player, DamageSource source)
     {
+        // Игроки в команде gungame всегда умирают сразу, без bleedout
+        if (isInGunGameTeam(player))
+            return true;
+
         String msgId = source.getMsgId();
         // Разрешаем урон типа genericKill/generic (самоубийство, истечение таймера)
         if (msgId.equals("genericKill") || msgId.equals("generic"))
@@ -71,6 +76,11 @@ public class BleedOutHandler
         if (msgId.equals("beast"))
             return true;
         return false;
+    }
+
+    private static boolean isInGunGameTeam(ServerPlayer player)
+    {
+        return player.getTeam() != null && GUNGAME_TEAM_NAME.equalsIgnoreCase(player.getTeam().getName());
     }
 
     @SubscribeEvent
@@ -783,7 +793,7 @@ public class BleedOutHandler
         
         // Если это самоубийство или падение - finisher = null
         // Если это genericKill (истечение таймера) - finisher = null
-        if (!msgId.equals("genericKill") && !msgId.equals("generic") && !msgId.equals("fall"))
+        if (!msgId.equals("genericKill") && !msgId.equals("generic"))
         {
             // Проверяем есть ли добивший игрок
             if (source.getEntity() instanceof ServerPlayer finisher)

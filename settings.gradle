@@ -11,3 +11,7 @@ pluginManagement {
 plugins {
     id 'org.gradle.toolchains.foojay-resolver-convention' version '0.7.0'
 }
+
+// Подключаем исходники BloodyBits как отдельную composite-сборку.
+// Это позволяет собирать его jar локально без CurseMaven.
+includeBuild('BloodyBits-main')
