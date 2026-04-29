@@ -1,16 +1,22 @@
 package com.covalscy.bleedout;
 
 import com.mojang.logging.LogUtils;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.entity.Mob;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.Pose;
 import net.minecraft.world.InteractionHand;
 import net.minecraft.world.damagesource.DamageSource;
+import net.minecraft.world.effect.MobEffect;
+import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraftforge.event.TickEvent;
 import net.minecraftforge.event.entity.living.LivingDeathEvent;
 import net.minecraftforge.event.entity.living.LivingHurtEvent;
 import net.minecraftforge.event.entity.living.LivingEvent;
+import net.minecraftforge.event.entity.living.LivingChangeTargetEvent;
 import net.minecraftforge.event.entity.player.PlayerEvent;
 import net.minecraftforge.event.entity.player.PlayerInteractEvent;
 import net.minecraftforge.eventbus.api.EventPriority;
@@ -19,7 +25,9 @@ import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.ModList;
 import org.slf4j.Logger;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -32,6 +40,7 @@ public class BleedOutHandler
     private static final int MINIMAP_POINTS_KNOCK = 30;
     private static final int MINIMAP_POINTS_REVIVE_ASSIST = 20;
     private static final int MINIMAP_POINTS_FINISH = 15;
+    private static final int MINIMAP_POINTS_VEHICLE_DESTROY = 120;
     private static final Map<UUID, Integer> bleedingPlayers = new HashMap<>();
     // Ключ - UUID возрождаемого игрока, Значение - пара (UUID возрождающего, тики до завершения)
     private static final Map<UUID, ReviveData> revivingPlayers = new HashMap<>();
@@ -41,6 +50,11 @@ public class BleedOutHandler
     private static final Map<UUID, Boolean> dyingPlayers = new HashMap<>();
     // Отслеживаем кто положил игрока в кровотечение: UUID упавшего -> UUID того, кто положил (downer)
     private static final Map<UUID, UUID> bleedingDowners = new HashMap<>();
+    private static final int BLEEDING_EFFECT_DURATION_TICKS = 40;
+
+    private record BleedingEffectData(MobEffect effect, int amplifier)
+    {
+    }
 
     private static class ReviveData
     {
@@ -126,6 +140,84 @@ public class BleedOutHandler
             
             // Получение урона возрождающим больше НЕ прерывает процесс возрождения.
         }
+    }
+
+    @SubscribeEvent
+    public static void onLivingChangeTarget(LivingChangeTargetEvent event)
+    {
+        if (!Config.bleedingPlayersIgnoredByMobs)
+        {
+            return;
+        }
+
+        if (!(event.getEntity() instanceof Mob mob) || mob.level().isClientSide)
+        {
+            return;
+        }
+
+        if (!(event.getNewTarget() instanceof ServerPlayer player) || !isBleeding(player))
+        {
+            return;
+        }
+
+        event.setNewTarget(null);
+    }
+
+    @SubscribeEvent(priority = EventPriority.HIGHEST)
+    public static void onBleedingPlayerHurtByMob(LivingHurtEvent event)
+    {
+        if (!Config.bleedingPlayersIgnoredByMobs)
+        {
+            return;
+        }
+
+        if (!(event.getEntity() instanceof ServerPlayer player) || player.level().isClientSide)
+        {
+            return;
+        }
+
+        if (!isBleeding(player) || !(event.getSource().getEntity() instanceof Mob mob))
+        {
+            return;
+        }
+
+        mob.setTarget(null);
+        mob.setLastHurtByMob(null);
+        event.setCanceled(true);
+    }
+
+    @SubscribeEvent
+    public static void onVehicleDeath(LivingDeathEvent event)
+    {
+        // Начисляем очки за уничтожение техники из SuperbWarfare
+        if (!event.getEntity().level().isClientSide && !(event.getEntity() instanceof net.minecraft.server.level.ServerPlayer))
+        {
+            net.minecraft.world.entity.Entity entity = event.getEntity();
+            if (isSuperbWarfareVehicle(entity))
+            {
+                if (event.getSource().getEntity() instanceof ServerPlayer killer)
+                {
+                    addPointsToMinimap(killer, MINIMAP_POINTS_VEHICLE_DESTROY, "destroy_vehicle");
+                }
+            }
+        }
+    }
+
+    private static boolean isSuperbWarfareVehicle(net.minecraft.world.entity.Entity entity)
+    {
+        Class<?> clazz = entity.getClass();
+        while (clazz != null && clazz != Object.class)
+        {
+            String name = clazz.getName();
+            if (name.equals("com.atsuishio.superbwarfare.entity.vehicle.base.VehicleEntity") ||
+                name.equals("com.atsuishio.superbwarfare.entity.vehicle.base.ArtilleryEntity") ||
+                name.equals("com.atsuishio.superbwarfare.entity.vehicle.base.GeoVehicleEntity"))
+            {
+                return true;
+            }
+            clazz = clazz.getSuperclass();
+        }
+        return false;
     }
 
     @SubscribeEvent(priority = EventPriority.HIGHEST)
@@ -311,28 +403,7 @@ public class BleedOutHandler
                     // Если игрока возрождали - отменяем возрождение и уведомляем возрождающего
                     if (revivingPlayers.containsKey(playerId))
                     {
-                        ReviveData reviveData = revivingPlayers.get(playerId);
-                        ServerPlayer reviver = player.server.getPlayerList().getPlayer(reviveData.reviverId);
-                        
-                        if (reviver != null)
-                        {
-                            // LOGGER.info("[BleedOut] Cancelling revive for expired bleedout player {}, notifying reviver {}", 
-                            //     player.getName().getString(), reviver.getName().getString());
-                            
-                        // Отправляем пакет возрождающему, что возрождение прервано
-                            com.covalscy.bleedout.network.BleedOutNetwork.INSTANCE.sendTo(
-                                new com.covalscy.bleedout.network.ReviveUpdatePacket(false, 0),
-                                reviver.connection.connection,
-                                net.minecraftforge.network.NetworkDirection.PLAY_TO_CLIENT
-                            );
-
-                        // И возрождаемому
-                        com.covalscy.bleedout.network.BleedOutNetwork.INSTANCE.sendTo(
-                            new com.covalscy.bleedout.network.ReviveUpdatePacket(false, 0),
-                            player.connection.connection,
-                            net.minecraftforge.network.NetworkDirection.PLAY_TO_CLIENT
-                        );
-                        }
+                        stopRevive(player, true, true);
                     }
                     
                     // Время истекло - убиваем игрока
@@ -340,7 +411,6 @@ public class BleedOutHandler
                     dyingPlayers.put(playerId, true);
                     
                     bleedingPlayers.remove(playerId);
-                    revivingPlayers.remove(playerId); // Убираем из возрождения, если было
                     poseSetForPlayers.remove(playerId);
                     // Убираем флаг из PersistentData
                     player.getPersistentData().remove("bleedout:bleeding");
@@ -355,11 +425,12 @@ public class BleedOutHandler
                     // Используем genericKill как источник урона (finisher = null)
                     sendKillInfoToTabMod(player, player.damageSources().genericKill());
                     
-                    // Очищаем информацию о downer после отправки пакета
-                    bleedingDowners.remove(playerId);
-                    
-                    // Восстанавливаем позу перед смертью
-                    player.setForcedPose(null);
+                     // Очищаем информацию о downer после отправки пакета
+                     bleedingDowners.remove(playerId);
+                    BloodyBitsCompat.clearBleedingPlayer(player);
+                     
+                     // Восстанавливаем позу перед смертью
+                     player.setForcedPose(null);
                     
                     // LOGGER.info("[BleedOut] Dealing lethal damage to player {}", player.getName().getString());
                     player.hurt(player.damageSources().genericKill(), Float.MAX_VALUE);
@@ -371,6 +442,12 @@ public class BleedOutHandler
                 {
                     // Обновляем таймер
                     bleedingPlayers.put(playerId, ticksLeft);
+
+                    BloodyBitsCompat.tickBleedingPlayer(player, ticksLeft);
+                    if (ticksLeft % 20 == 0)
+                    {
+                        applyBleedingEffects(player);
+                    }
                     
                     // Устанавливаем позу ползания (лежащий) - используем setForcedPose как в PlayerRevive
                     Pose currentPose = player.getPose();
@@ -390,36 +467,46 @@ public class BleedOutHandler
                     //     player.setHealth(0.5f);
                     // }
                     
-                    // Ограничиваем скорость движения (медленное ползание)
                     var deltaMovement = player.getDeltaMovement();
-                    double maxSpeed = 0.01; // Очень медленная скорость ползания
-                    
+
                     // Запрещаем прыжки (сбрасываем вертикальную скорость если она положительная)
                     if (deltaMovement.y > 0)
                     {
                         player.setDeltaMovement(deltaMovement.x, 0, deltaMovement.z);
                         deltaMovement = player.getDeltaMovement();
                     }
-                    
-                    // Ограничиваем горизонтальную скорость
-                    double horizontalSpeed = Math.sqrt(deltaMovement.x * deltaMovement.x + deltaMovement.z * deltaMovement.z);
-                    if (horizontalSpeed > maxSpeed)
+
+                    if (Config.disableMovementWhileBleeding)
                     {
-                        double scale = maxSpeed / horizontalSpeed;
                         player.setDeltaMovement(
-                            deltaMovement.x * scale,
+                            0,
                             Math.min(deltaMovement.y, 0.1), // Ограничиваем вертикальную скорость
-                            deltaMovement.z * scale
+                            0
                         );
                     }
-                    else if (horizontalSpeed > 0 && horizontalSpeed < maxSpeed)
+                    else
                     {
-                        // Если скорость уже медленная, оставляем как есть, но ограничиваем вертикальную
-                        player.setDeltaMovement(
-                            deltaMovement.x,
-                            Math.min(deltaMovement.y, 0.1),
-                            deltaMovement.z
-                        );
+                        // Ограничиваем скорость движения (медленное ползание)
+                        double maxSpeed = 0.01; // Очень медленная скорость ползания
+                        double horizontalSpeed = Math.sqrt(deltaMovement.x * deltaMovement.x + deltaMovement.z * deltaMovement.z);
+                        if (horizontalSpeed > maxSpeed)
+                        {
+                            double scale = maxSpeed / horizontalSpeed;
+                            player.setDeltaMovement(
+                                deltaMovement.x * scale,
+                                Math.min(deltaMovement.y, 0.1), // Ограничиваем вертикальную скорость
+                                deltaMovement.z * scale
+                            );
+                        }
+                        else if (horizontalSpeed > 0 && horizontalSpeed < maxSpeed)
+                        {
+                            // Если скорость уже медленная, оставляем как есть, но ограничиваем вертикальную
+                            player.setDeltaMovement(
+                                deltaMovement.x,
+                                Math.min(deltaMovement.y, 0.1),
+                                deltaMovement.z
+                            );
+                        }
                     }
                     
                     // Блокируем прыжки
@@ -450,17 +537,7 @@ public class BleedOutHandler
                     !isBleeding(player))
                 {
                     // Прерываем возрождение только если возрождающий отошел слишком далеко или умер
-                    revivingPlayers.remove(playerId);
-                    
-                    // Отправляем пакет возрождающему, что возрождение прервано
-                    if (reviver != null)
-                    {
-                        com.covalscy.bleedout.network.BleedOutNetwork.INSTANCE.sendTo(
-                            new com.covalscy.bleedout.network.ReviveUpdatePacket(false, 0),
-                            reviver.connection.connection,
-                            net.minecraftforge.network.NetworkDirection.PLAY_TO_CLIENT
-                        );
-                    }
+                    stopRevive(player, true, true);
                     return;
                 }
                 
@@ -471,21 +548,7 @@ public class BleedOutHandler
                 {
                     // Возрождение завершено
                     // LOGGER.info("[BleedOut] Revive completed for player {}", player.getName().getString());
-                    revivingPlayers.remove(playerId);
-                    
-                    // Отправляем пакет возрождающему, что возрождение завершено
-                    com.covalscy.bleedout.network.BleedOutNetwork.INSTANCE.sendTo(
-                        new com.covalscy.bleedout.network.ReviveUpdatePacket(false, 0),
-                        reviver.connection.connection,
-                        net.minecraftforge.network.NetworkDirection.PLAY_TO_CLIENT
-                    );
-
-                    // И возрождаемому
-                    com.covalscy.bleedout.network.BleedOutNetwork.INSTANCE.sendTo(
-                        new com.covalscy.bleedout.network.ReviveUpdatePacket(false, 0),
-                        player.connection.connection,
-                        net.minecraftforge.network.NetworkDirection.PLAY_TO_CLIENT
-                    );
+                    stopRevive(player, true, true);
 
                     // Начисляем assist сразу в момент успешного поднятия
                     sendReviveAssistToTabMod(player, reviver);
@@ -549,18 +612,10 @@ public class BleedOutHandler
                 revivingPlayers.put(targetPlayer.getUUID(), new ReviveData(interactor.getUUID(), reviveTicks));
                 
                 // Отправляем пакет возрождающему о начале возрождения
-                com.covalscy.bleedout.network.BleedOutNetwork.INSTANCE.sendTo(
-                    new com.covalscy.bleedout.network.ReviveUpdatePacket(true, reviveTicks),
-                    interactor.connection.connection,
-                    net.minecraftforge.network.NetworkDirection.PLAY_TO_CLIENT
-                );
+                sendReviveState(interactor, true, reviveTicks);
 
                 // И возрождаемому, чтобы он видел, что его поднимают
-                com.covalscy.bleedout.network.BleedOutNetwork.INSTANCE.sendTo(
-                    new com.covalscy.bleedout.network.ReviveUpdatePacket(true, reviveTicks),
-                    targetPlayer.connection.connection,
-                    net.minecraftforge.network.NetworkDirection.PLAY_TO_CLIENT
-                );
+                sendReviveState(targetPlayer, true, reviveTicks);
                 
                 event.setCanceled(true);
             }
@@ -578,7 +633,8 @@ public class BleedOutHandler
             if (bleedingPlayers.containsKey(playerId))
             {
                 // LOGGER.info("[BleedOut] Player {} logged out while bleeding, killing", player.getName().getString());
-                
+                BloodyBitsCompat.clearBleedingPlayer(player);
+                 
                 // Убиваем игрока перед отключением
                 killBleedingPlayer(player);
             }
@@ -661,6 +717,124 @@ public class BleedOutHandler
         
         // Игрок может медленно ползать, не блокируем движение полностью
         player.setJumping(false);
+        applyBleedingEffects(player);
+    }
+
+    private static void applyBleedingEffects(ServerPlayer player)
+    {
+        for (BleedingEffectData effectData : getConfiguredBleedingEffects())
+        {
+            player.addEffect(new MobEffectInstance(
+                effectData.effect(),
+                BLEEDING_EFFECT_DURATION_TICKS,
+                effectData.amplifier(),
+                false,
+                false,
+                true
+            ));
+        }
+    }
+
+    private static void sendReviveState(ServerPlayer player, boolean isReviving, int ticksLeft)
+    {
+        if (player == null)
+        {
+            return;
+        }
+
+        com.covalscy.bleedout.network.BleedOutNetwork.INSTANCE.sendTo(
+            new com.covalscy.bleedout.network.ReviveUpdatePacket(isReviving, ticksLeft),
+            player.connection.connection,
+            net.minecraftforge.network.NetworkDirection.PLAY_TO_CLIENT
+        );
+    }
+
+    private static void stopRevive(ServerPlayer targetPlayer, boolean notifyReviver, boolean notifyTarget)
+    {
+        if (targetPlayer == null)
+        {
+            return;
+        }
+
+        UUID targetId = targetPlayer.getUUID();
+        ReviveData reviveData = revivingPlayers.remove(targetId);
+        if (reviveData == null)
+        {
+            return;
+        }
+
+        ServerPlayer reviver = targetPlayer.server.getPlayerList().getPlayer(reviveData.reviverId);
+        if (notifyReviver && reviver != null)
+        {
+            sendReviveState(reviver, false, 0);
+        }
+
+        if (notifyTarget)
+        {
+            sendReviveState(targetPlayer, false, 0);
+        }
+    }
+
+    private static List<BleedingEffectData> getConfiguredBleedingEffects()
+    {
+        List<BleedingEffectData> effects = new ArrayList<>();
+        for (String rawEntry : Config.bleedingEffects)
+        {
+            BleedingEffectData effectData = parseBleedingEffect(rawEntry);
+            if (effectData != null)
+            {
+                effects.add(effectData);
+            }
+        }
+        return effects;
+    }
+
+    private static BleedingEffectData parseBleedingEffect(String rawEntry)
+    {
+        if (rawEntry == null)
+        {
+            return null;
+        }
+
+        String entry = rawEntry.trim();
+        if (entry.isEmpty())
+        {
+            return null;
+        }
+
+        int amplifier = 0;
+        String effectId = entry;
+        int lastColon = entry.lastIndexOf(':');
+        if (lastColon > 0)
+        {
+            String amplifierPart = entry.substring(lastColon + 1).trim();
+            String possibleEffectId = entry.substring(0, lastColon).trim();
+            try
+            {
+                amplifier = Integer.parseInt(amplifierPart);
+                effectId = possibleEffectId;
+            }
+            catch (NumberFormatException ignored)
+            {
+                effectId = entry;
+            }
+        }
+
+        ResourceLocation resourceLocation = ResourceLocation.tryParse(effectId);
+        if (resourceLocation == null)
+        {
+            LOGGER.warn("[BleedOut] Invalid bleeding effect config entry: {}", rawEntry);
+            return null;
+        }
+
+        MobEffect effect = BuiltInRegistries.MOB_EFFECT.get(resourceLocation);
+        if (effect == null)
+        {
+            LOGGER.warn("[BleedOut] Unknown bleeding effect in config: {}", rawEntry);
+            return null;
+        }
+
+        return new BleedingEffectData(effect, Math.max(0, amplifier));
     }
 
     /**
@@ -745,6 +919,7 @@ public class BleedOutHandler
             revivingPlayers.remove(playerId);
             poseSetForPlayers.remove(playerId);
             player.getPersistentData().remove("bleedout:bleeding");
+            BloodyBitsCompat.clearBleedingPlayer(player);
             
             // Отправляем пакет на клиент для синхронизации состояния
             com.covalscy.bleedout.network.BleedOutNetwork.sendToTrackingAndSelf(
@@ -833,6 +1008,10 @@ public class BleedOutHandler
             // Тот, кто нанес урон, становится killer
             killerId = finisherId;
             finisherId = null; // assist не нужен
+            
+            // Начисляем очки за полное убийство (нок + финиш) в MinimapMod
+            ServerPlayer killerPlayer = victim.server.getPlayerList().getPlayer(killerId);
+            addPointsToMinimap(killerPlayer, MINIMAP_POINTS_FINISH, "instant_kill");
         }
         else if (killerId != null && finisherId != null)
         {
@@ -898,11 +1077,10 @@ public class BleedOutHandler
         {
             net.minecraft.server.MinecraftServer server = revived.server;
             Class<?> handlerClass = Class.forName("com.covalscy.customtab.server.BleedOutKillHandler");
-            java.lang.reflect.Method handleMethod = handlerClass.getMethod("handleKill",
-                net.minecraft.server.MinecraftServer.class, UUID.class, UUID.class, UUID.class);
+            java.lang.reflect.Method handleMethod = handlerClass.getMethod("handleRevive",
+                net.minecraft.server.MinecraftServer.class, UUID.class, UUID.class);
 
-            // killer = null, assist = reviver: ассист без привязки к отдельному киллу в этом моде
-            handleMethod.invoke(null, server, revivedId, null, reviverId);
+            handleMethod.invoke(null, server, revivedId, reviverId);
         }
         catch (Exception e)
         {
@@ -949,6 +1127,7 @@ public class BleedOutHandler
     private static void revivePlayer(ServerPlayer player)
     {
         UUID playerId = player.getUUID();
+        stopRevive(player, false, true);
         // LOGGER.info("[BleedOut] Reviving player {}", player.getName().getString());
         
         // Убираем из кровотечения
@@ -956,6 +1135,7 @@ public class BleedOutHandler
         poseSetForPlayers.remove(playerId);
         bleedingDowners.remove(playerId); // Очищаем информацию о downer при возрождении
         player.getPersistentData().remove("bleedout:bleeding");
+        BloodyBitsCompat.clearBleedingPlayer(player);
         
         // Отправляем пакет на клиент для синхронизации состояния
         com.covalscy.bleedout.network.BleedOutNetwork.sendToTrackingAndSelf(

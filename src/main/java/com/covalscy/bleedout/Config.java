@@ -1,5 +1,6 @@
 package com.covalscy.bleedout;
 
+import java.util.List;
 import net.minecraftforge.common.ForgeConfigSpec;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.common.Mod;
@@ -40,6 +41,54 @@ public class Config
             .comment("Время начальной неуязвимости в тиках после падения (10 = 0.5 секунды)")
             .defineInRange("initialDamageCooldown", 10, 0, 100);
 
+    public static final ForgeConfigSpec.BooleanValue DISABLE_MOVEMENT_WHILE_BLEEDING = BUILDER
+            .comment("Disable movement while bleeding")
+            .comment("Отключить движение во время кровотечения")
+            .define("disableMovementWhileBleeding", false);
+
+    public static final ForgeConfigSpec.BooleanValue BLEEDING_PLAYERS_IGNORED_BY_MOBS = BUILDER
+            .comment("Make bleeding players ignored by mob targeting")
+            .comment("Мобы игнорируют игроков во время кровотечения как цель")
+            .define("bleedingPlayersIgnoredByMobs", false);
+
+    public static final ForgeConfigSpec.ConfigValue<List<? extends String>> BLEEDING_EFFECTS = BUILDER
+            .comment("Effects applied while bleeding. Format: effect_id[:amplifier], amplifier starts at 0")
+            .comment("Эффекты во время кровотечения. Формат: effect_id[:amplifier], уровень начинается с 0")
+            .defineListAllowEmpty(
+                    "bleedingEffects",
+                    List.of("minecraft:slowness:1"),
+                    value -> value instanceof String
+            );
+
+    public static final ForgeConfigSpec.ConfigValue<List<? extends String>> DISABLED_INPUTS_WHILE_BLEEDING = BUILDER
+            .comment("Keyboard and mouse inputs disabled while bleeding")
+            .comment("Special values: ALL_KEYBOARD disables all keyboard input, ALL disables keyboard and mouse buttons")
+            .comment("Examples: key.jump, key.sneak, key.inventory, key.attack, key.use")
+            .comment("Клавиши и кнопки мыши, отключаемые во время кровотечения")
+            .comment("Спецзначения: ALL_KEYBOARD отключает всю клавиатуру, ALL отключает клавиатуру и кнопки мыши")
+            .defineListAllowEmpty(
+                    "disabledInputsWhileBleeding",
+                    List.of(
+                            "key.parcool.Enable",
+                            "key.parcool.Crawl",
+                            "key.parcool.ClingToCliff",
+                            "key.parcool.Breakfall",
+                            "key.parcool.FastRun",
+                            "key.parcool.Flipping",
+                            "key.parcool.Vault",
+                            "key.parcool.Dodge",
+                            "key.parcool.RideZipline",
+                            "key.parcool.WallJump",
+                            "key.parcool.HangDown",
+                            "key.parcool.WallSlide",
+                            "key.parcool.HideInBlock",
+                            "key.parcool.HorizontalWallRun",
+                            "key.parcool.QuickTurn",
+                            "key.parcool.openSetting"
+                    ),
+                    value -> value instanceof String
+            );
+
     static final ForgeConfigSpec SPEC = BUILDER.build();
 
     public static int bleedoutTime;
@@ -48,6 +97,10 @@ public class Config
     public static int suicideTime;
     public static int bleedingHealth;
     public static int initialDamageCooldown;
+    public static boolean disableMovementWhileBleeding;
+    public static boolean bleedingPlayersIgnoredByMobs;
+    public static List<? extends String> bleedingEffects;
+    public static List<? extends String> disabledInputsWhileBleeding;
 
     @SubscribeEvent
     static void onLoad(final ModConfigEvent event)
@@ -64,5 +117,9 @@ public class Config
         suicideTime = SUICIDE_TIME.get();
         bleedingHealth = BLEEDING_HEALTH.get();
         initialDamageCooldown = INITIAL_DAMAGE_COOLDOWN.get();
+        disableMovementWhileBleeding = DISABLE_MOVEMENT_WHILE_BLEEDING.get();
+        bleedingPlayersIgnoredByMobs = BLEEDING_PLAYERS_IGNORED_BY_MOBS.get();
+        bleedingEffects = BLEEDING_EFFECTS.get();
+        disabledInputsWhileBleeding = DISABLED_INPUTS_WHILE_BLEEDING.get();
     }
 }

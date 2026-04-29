@@ -2,6 +2,7 @@ package com.covalscy.bleedout;
 
 import com.mojang.blaze3d.systems.RenderSystem;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.KeyMapping;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.registries.BuiltInRegistries;
@@ -25,7 +26,9 @@ import net.minecraftforge.fml.ModList;
 import com.mojang.logging.LogUtils;
 import org.slf4j.Logger;
 
+import java.util.List;
 import java.util.Set;
+import java.util.HashSet;
 
 /**
  * Оверлей для отображения состояния кровотечения и прогресс-бара самоубийства
@@ -540,6 +543,8 @@ class BleedOutOverlay implements IGuiOverlay
 @Mod.EventBusSubscriber(modid = BleedOutMod.MODID, bus = Mod.EventBusSubscriber.Bus.FORGE, value = Dist.CLIENT)
 class BleedOutClientHandler
 {
+    private static final String DISABLE_ALL_INPUTS = "ALL";
+    private static final String DISABLE_ALL_KEYBOARD_INPUTS = "ALL_KEYBOARD";
     // === ОПТИМИЗАЦИЯ: Кешируем классы для рефлексии ===
     private static Class<?> cachedIGunClass = null;
     private static Class<?> cachedShootKeyClass = null;
@@ -650,6 +655,79 @@ class BleedOutClientHandler
         String className = stack.getItem().getClass().getName();
         return className.contains("superbwarfare") && !isSuperWarfareGrenade(stack);
     }
+
+    private static Set<String> getDisabledBleedingInputs()
+    {
+        Set<String> disabledInputs = new HashSet<>();
+        disabledInputs.add("KEY.JUMP");
+        disabledInputs.add("KEY.SNEAK");
+
+        List<? extends String> configuredInputs = Config.disabledInputsWhileBleeding;
+        if (configuredInputs == null)
+        {
+            return disabledInputs;
+        }
+
+        for (String value : configuredInputs)
+        {
+            if (value != null)
+            {
+                String normalized = value.trim();
+                if (!normalized.isEmpty())
+                {
+                    disabledInputs.add(normalized.toUpperCase(java.util.Locale.ROOT));
+                }
+            }
+        }
+        return disabledInputs;
+    }
+
+    private static boolean shouldDisableKeyboardInput(Set<String> disabledInputs, KeyMapping keyMapping)
+    {
+        if (disabledInputs.contains(DISABLE_ALL_INPUTS) || disabledInputs.contains(DISABLE_ALL_KEYBOARD_INPUTS))
+        {
+            return true;
+        }
+
+        if (keyMapping == null)
+        {
+            return false;
+        }
+
+        String keyName = keyMapping.getName();
+        return keyName != null && disabledInputs.contains(keyName.toUpperCase(java.util.Locale.ROOT));
+    }
+
+    private static boolean shouldDisableMouseButtons(Set<String> disabledInputs)
+    {
+        return disabledInputs.contains(DISABLE_ALL_INPUTS);
+    }
+
+    private static boolean shouldDisableAttack(Set<String> disabledInputs)
+    {
+        return shouldDisableMouseButtons(disabledInputs) || disabledInputs.contains("KEY.ATTACK");
+    }
+
+    private static boolean shouldDisableUse(Set<String> disabledInputs)
+    {
+        return shouldDisableMouseButtons(disabledInputs) || disabledInputs.contains("KEY.USE");
+    }
+
+    private static void releaseConfiguredKeyboardInputs(Minecraft mc, Player player, Set<String> disabledInputs)
+    {
+        for (KeyMapping keyMapping : mc.options.keyMappings)
+        {
+            if (shouldDisableKeyboardInput(disabledInputs, keyMapping) && keyMapping.isDown())
+            {
+                keyMapping.setDown(false);
+            }
+        }
+
+        if (shouldDisableKeyboardInput(disabledInputs, mc.options.keyShift))
+        {
+            player.setShiftKeyDown(false);
+        }
+    }
     
     // Блокируем все клики мышью (атаку, использование предметов, взаимодействие) при кровотечении
     @SubscribeEvent(priority = EventPriority.HIGHEST)
@@ -662,9 +740,18 @@ class BleedOutClientHandler
             boolean isBleeding = player.getPersistentData().getBoolean("bleedout:bleeding");
             if (isBleeding)
             {
-                // Блокируем ВСЁ при кровотечении (взаимодействие, атаку, использование)
-                // Гранаты обрабатываются отдельно в onMouseButton
-                event.setCanceled(true);
+                Set<String> disabledInputs = getDisabledBleedingInputs();
+                if (event.isAttack())
+                {
+                    event.setCanceled(true);
+                    return;
+                }
+
+                if (shouldDisableMouseButtons(disabledInputs) || shouldDisableKeyboardInput(disabledInputs, event.getKeyMapping()))
+                {
+                    // Блокируем key mappings, но не движение мыши
+                    event.setCanceled(true);
+                }
             }
         }
     }
@@ -691,6 +778,13 @@ class BleedOutClientHandler
         boolean isBleeding = player.getPersistentData().getBoolean("bleedout:bleeding");
         if (isBleeding)
         {
+            Set<String> disabledInputs = getDisabledBleedingInputs();
+            if (shouldDisableMouseButtons(disabledInputs))
+            {
+                event.setCanceled(true);
+                return;
+            }
+
             ItemStack mainHand = player.getMainHandItem();
             
             // Проверяем, держит ли игрок что-то из SuperbWarfare в главной руке
@@ -698,7 +792,7 @@ class BleedOutClientHandler
             {
                 // Для гранаты разрешаем только ЛКМ (button 0)
                 // ПКМ (1) блокируем, остальные (2, 3, 4) уже разрешены выше
-                if (button != 0)
+                if (button != 0 || shouldDisableAttack(disabledInputs))
                 {
                     event.setCanceled(true);
                     return;
@@ -719,7 +813,7 @@ class BleedOutClientHandler
                 // Если в руках нет оружия/гранат, но игрок в кровотечении
                 // Блокируем только ПКМ (1), ЛКМ (0) разрешён для самоубийства
                 // СКМ (2), кнопка 4 (3), кнопка 5 (4) уже разрешены выше
-                if (button == 1)
+                if ((button == 0 && shouldDisableAttack(disabledInputs)) || (button == 1 && shouldDisableUse(disabledInputs)) || button == 1)
                 {
                     event.setCanceled(true);
                     return;
@@ -768,11 +862,62 @@ class BleedOutClientHandler
         if (isBleeding)
         {
             ItemStack mainHand = player.getMainHandItem();
+            Set<String> disabledInputs = getDisabledBleedingInputs();
+
+            releaseConfiguredKeyboardInputs(mc, player, disabledInputs);
+
+            if (shouldDisableAttack(disabledInputs) && mc.options.keyAttack.isDown())
+            {
+                mc.options.keyAttack.setDown(false);
+            }
+
+            if (shouldDisableUse(disabledInputs) && mc.options.keyUse.isDown())
+            {
+                mc.options.keyUse.setDown(false);
+            }
             
             // Блокируем прыжки - сбрасываем клавишу пробела
-            if (mc.options.keyJump.isDown())
+            if (mc.options.keyJump.isDown() && shouldDisableKeyboardInput(disabledInputs, mc.options.keyJump))
             {
                 mc.options.keyJump.setDown(false);
+            }
+
+            // Блокируем ванильный шифт/приседание во время кровотечения
+            if (mc.options.keyShift.isDown() && shouldDisableKeyboardInput(disabledInputs, mc.options.keyShift))
+            {
+                mc.options.keyShift.setDown(false);
+            }
+            if (shouldDisableKeyboardInput(disabledInputs, mc.options.keyShift))
+            {
+                player.setShiftKeyDown(false);
+            }
+
+            if (Config.disableMovementWhileBleeding)
+            {
+                if (mc.options.keyUp.isDown())
+                {
+                    mc.options.keyUp.setDown(false);
+                }
+                if (mc.options.keyDown.isDown())
+                {
+                    mc.options.keyDown.setDown(false);
+                }
+                if (mc.options.keyLeft.isDown())
+                {
+                    mc.options.keyLeft.setDown(false);
+                }
+                if (mc.options.keyRight.isDown())
+                {
+                    mc.options.keyRight.setDown(false);
+                }
+
+                if (player instanceof LocalPlayer localPlayer && localPlayer.input != null)
+                {
+                    localPlayer.input.forwardImpulse = 0;
+                    localPlayer.input.leftImpulse = 0;
+                    localPlayer.input.jumping = false;
+                    localPlayer.input.shiftKeyDown = false;
+                }
             }
             
             // Проверяем TACZ оружие и сбрасываем SHOOT_KEY (оптимизированная проверка)
@@ -785,12 +930,11 @@ class BleedOutClientHandler
                     if (shootKey instanceof net.minecraft.client.KeyMapping keyMapping)
                     {
                         // Принудительно устанавливаем состояние "не нажата"
-                        keyMapping.setDown(false);
+                        if (shouldDisableMouseButtons(disabledInputs) || shouldDisableKeyboardInput(disabledInputs, keyMapping))
+                        {
+                            keyMapping.setDown(false);
+                        }
                     }
-                    
-                    // Также сбрасываем стандартные кнопки атаки и использования
-                    mc.options.keyAttack.setDown(false);
-                    mc.options.keyUse.setDown(false);
                 }
                 catch (Exception e)
                 {
@@ -827,12 +971,13 @@ class BleedOutClientHandler
         if (isBleeding)
         {
             ItemStack mainHand = player.getMainHandItem();
+            Set<String> disabledInputs = getDisabledBleedingInputs();
             
             // Оптимизированная проверка оружия
             boolean holdingWeapon = isTACZGun(mainHand) || isSuperWarfareWeapon(mainHand);
             
-            // Обрабатываем самоубийство только если НЕ держим оружие
-            if (!holdingWeapon && mc.options.keyAttack.isDown())
+            // Обрабатываем самоубийство только если НЕ держим оружие и атака не отключена конфигом
+            if (!holdingWeapon && !shouldDisableAttack(disabledInputs) && mc.options.keyAttack.isDown())
             {
                 int suicideTicks = Config.suicideTime * 20;
                 if (BleedOutOverlay.getLeftClickTicks() >= suicideTicks)
