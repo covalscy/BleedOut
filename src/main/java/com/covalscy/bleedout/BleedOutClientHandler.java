@@ -181,9 +181,19 @@ class BleedOutOverlay implements IGuiOverlay
         if (isBleeding)
         {
             // Вычисляем прогресс кровотечения (0.0 = только началось, 1.0 = почти умер)
-            int totalBleedoutTicks = bleedoutStartTicks > 0 ? bleedoutStartTicks : (Config.bleedoutTime * 20);
-            float bleedoutProgress = totalBleedoutTicks > 0 ? 1.0f - ((float) currentBleedoutTicks / totalBleedoutTicks) : 0.0f;
-            bleedoutProgress = Math.max(0.0f, Math.min(1.0f, bleedoutProgress));
+            float bleedoutProgress;
+            if (Config.enableBleedoutTimer)
+            {
+                int totalBleedoutTicks = bleedoutStartTicks > 0 ? bleedoutStartTicks : (Config.bleedoutTime * 20);
+                bleedoutProgress = totalBleedoutTicks > 0 ? 1.0f - ((float) currentBleedoutTicks / totalBleedoutTicks) : 0.0f;
+                bleedoutProgress = Math.max(0.0f, Math.min(1.0f, bleedoutProgress));
+            }
+            else
+            {
+                // Если таймер отключен, плавно доводим прогресс до 0.25 за первые 5 секунд
+                long elapsedMs = System.currentTimeMillis() - bleedoutStartTime;
+                bleedoutProgress = Math.min(1.0f, (float) elapsedMs / 5000.0f) * 0.25f;
+            }
             
             // Базовое затемнение - увеличивается по мере кровотечения (от 0% до 100% прозрачности)
             float baseDarkness = bleedoutProgress * 1.0f;
@@ -252,7 +262,7 @@ class BleedOutOverlay implements IGuiOverlay
                     
                     // Используем кастомный звук сердцебиения
                     // Увеличиваем громкость для теста
-                    float testVolume = Math.max(volume, 1.0f); // Минимум 1.0 для теста
+                    float testVolume = Math.max(volume, 1.0f); // Miniмум 1.0 для теста
                     
                     if (ModSounds.HEARTBEAT.get() != null)
                     {
@@ -369,11 +379,18 @@ class BleedOutOverlay implements IGuiOverlay
             guiGraphics.fill(0, 0, screenWidth, screenHeight, darkColor);
             RenderSystem.disableBlend();
             
-            // Используем локально вычисленное время
-            int timeLeftSec = (int) Math.ceil(currentBleedoutTicks / 20.0); // Конвертируем тики в секунды, округляем вверх
-            
             // Отображаем оставшееся время кровотечения (уменьшенный текст)
-            String text = net.minecraft.network.chat.Component.translatable("bleedout.hud.bleeding", timeLeftSec).getString();
+            String text;
+            if (Config.enableBleedoutTimer)
+            {
+                // Используем локально вычисленное время
+                int timeLeftSec = (int) Math.ceil(currentBleedoutTicks / 20.0); // Конвертируем тики в секунды, округляем вверх
+                text = net.minecraft.network.chat.Component.translatable("bleedout.hud.bleeding", timeLeftSec).getString();
+            }
+            else
+            {
+                text = net.minecraft.network.chat.Component.translatable("bleedout.hud.bleeding_no_timer").getString();
+            }
             int textWidth = mc.font.width(text);
             
             poseStack.pushPose();
@@ -387,22 +404,25 @@ class BleedOutOverlay implements IGuiOverlay
             guiGraphics.drawString(mc.font, text, 0, 0, 0xC0FF0000, false); // Красный с прозрачностью 75%
             poseStack.popPose();
             
-            // Отображаем подсказку "ЛКМ чтобы умереть"
-            String hintText = net.minecraft.network.chat.Component.translatable("bleedout.hud.hint.suicide").getString();
-            int hintWidth = mc.font.width(hintText);
-            
-            poseStack.pushPose();
-            float hintScale = 0.6f * uiScale; // Базовый масштаб * масштаб из конфига
-            poseStack.scale(hintScale, hintScale, hintScale);
-            float hintX = (screenWidth / 2.0f - (hintWidth * hintScale) / 2.0f) / hintScale;
-            // Поднимаем подсказку тоже
-            float hintY = (screenHeight / 2.0f + (35 * uiScale)) / hintScale; // Ниже основного текста
-            poseStack.translate(hintX, hintY, 0);
-            guiGraphics.drawString(mc.font, hintText, 0, 0, 0x80808080, false); // Серый полупрозрачный
-            poseStack.popPose();
+            if (Config.enableSuicide)
+            {
+                // Отображаем подсказку "ЛКМ чтобы умереть"
+                String hintText = net.minecraft.network.chat.Component.translatable("bleedout.hud.hint.suicide").getString();
+                int hintWidth = mc.font.width(hintText);
+                
+                poseStack.pushPose();
+                float hintScale = 0.6f * uiScale; // Базовый масштаб * масштаб из конфига
+                poseStack.scale(hintScale, hintScale, hintScale);
+                float hintX = (screenWidth / 2.0f - (hintWidth * hintScale) / 2.0f) / hintScale;
+                // Поднимаем подсказку тоже
+                float hintY = (screenHeight / 2.0f + (35 * uiScale)) / hintScale; // Ниже основного текста
+                poseStack.translate(hintX, hintY, 0);
+                guiGraphics.drawString(mc.font, hintText, 0, 0, 0x80808080, false); // Серый полупрозрачный
+                poseStack.popPose();
+            }
             
             // Отображаем прямоугольный прогресс-бар самоубийства, если ЛКМ зажат
-            if (isBleeding && mc.options.keyAttack.isDown() && leftClickHoldTicks > 0)
+            if (Config.enableSuicide && isBleeding && mc.options.keyAttack.isDown() && leftClickHoldTicks > 0)
             {
                 int suicideTicks = Config.suicideTime * 20;
                 float progress = Math.min(1.0f, (float) leftClickHoldTicks / suicideTicks);
@@ -976,8 +996,8 @@ class BleedOutClientHandler
             // Оптимизированная проверка оружия
             boolean holdingWeapon = isTACZGun(mainHand) || isSuperWarfareWeapon(mainHand);
             
-            // Обрабатываем самоубийство только если НЕ держим оружие и атака не отключена конфигом
-            if (!holdingWeapon && !shouldDisableAttack(disabledInputs) && mc.options.keyAttack.isDown())
+            // Обрабатываем самоубийство только если оно включено в конфиге, НЕ держим оружие и атака не отключена конфигом
+            if (Config.enableSuicide && !holdingWeapon && !shouldDisableAttack(disabledInputs) && mc.options.keyAttack.isDown())
             {
                 int suicideTicks = Config.suicideTime * 20;
                 if (BleedOutOverlay.getLeftClickTicks() >= suicideTicks)

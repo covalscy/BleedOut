@@ -1,6 +1,7 @@
 package com.covalscy.bleedout.network;
 
 import com.covalscy.bleedout.BleedOutHandler;
+import com.covalscy.bleedout.Config;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraftforge.network.NetworkEvent;
@@ -27,7 +28,7 @@ public class SuicideRequestPacket
     {
         context.get().enqueueWork(() -> {
             ServerPlayer player = context.get().getSender();
-            if (player != null && BleedOutHandler.isBleeding(player))
+            if (Config.enableSuicide && player != null && BleedOutHandler.isBleeding(player))
             {
                 // Помечаем игрока как умирающего на сервере и убиваем его
                 BleedOutHandler.killBleedingPlayer(player);

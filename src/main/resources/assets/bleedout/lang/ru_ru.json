@@ -2,5 +2,11 @@
   "bleedout.hud.bleeding": "Кровотечение: %s сек",
   "bleedout.hud.hint.suicide": "ЛКМ чтобы умереть",
   "bleedout.hud.reviving": "Возрождение: %s сек",
-  "bleedout.hud.being_revived": "Вас возрождают: %s сек"
+  "bleedout.hud.being_revived": "Вас возрождают: %s сек",
+  "bleedout.hud.bleeding_no_timer": "Кровотечение...",
+  "bleedout.command.revive.success.self": "Вы были оживлены.",
+  "bleedout.command.revive.success.other": "Игрок %s был оживлен.",
+  "bleedout.command.revive.success.other.notification": "Вы были оживлены администратором.",
+  "bleedout.command.revive.failure.self": "Вы не истекаете кровью.",
+  "bleedout.command.revive.failure.other": "Игрок %s не истекает кровью."
 }

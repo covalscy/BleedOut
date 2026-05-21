@@ -2,5 +2,11 @@
   "bleedout.hud.bleeding": "Bleeding: %s sec",
   "bleedout.hud.hint.suicide": "Left click to die",
   "bleedout.hud.reviving": "Reviving: %s sec",
-  "bleedout.hud.being_revived": "You are being revived: %s sec"
+  "bleedout.hud.being_revived": "You are being revived: %s sec",
+  "bleedout.hud.bleeding_no_timer": "Bleeding...",
+  "bleedout.command.revive.success.self": "You have been revived.",
+  "bleedout.command.revive.success.other": "Revived player %s.",
+  "bleedout.command.revive.success.other.notification": "You have been revived by an administrator.",
+  "bleedout.command.revive.failure.self": "You are not bleeding.",
+  "bleedout.command.revive.failure.other": "Player %s is not bleeding."
 }

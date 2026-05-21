@@ -25,6 +25,13 @@ import net.minecraftforge.fml.common.Mod;
 import net.minecraftforge.fml.ModList;
 import org.slf4j.Logger;
 
+import net.minecraftforge.event.RegisterCommandsEvent;
+import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.EntityArgument;
+import net.minecraft.commands.CommandSourceStack;
+import net.minecraft.commands.Commands;
+import net.minecraft.network.chat.Component;
+
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -393,8 +400,11 @@ public class BleedOutHandler
             {
                 int ticksLeft = bleedingPlayers.get(playerId);
                 
-                // Уменьшаем таймер
-                ticksLeft--;
+                // Уменьшаем таймер только если он включен
+                if (Config.enableBleedoutTimer)
+                {
+                    ticksLeft--;
+                }
                 
                 if (ticksLeft <= 0)
                 {
@@ -444,7 +454,7 @@ public class BleedOutHandler
                     bleedingPlayers.put(playerId, ticksLeft);
 
                     BloodyBitsCompat.tickBleedingPlayer(player, ticksLeft);
-                    if (ticksLeft % 20 == 0)
+                    if (player.tickCount % 20 == 0)
                     {
                         applyBleedingEffects(player);
                     }
@@ -515,7 +525,7 @@ public class BleedOutHandler
                     
                     
                     // Логируем каждые 20 тиков (1 секунда) для отладки
-                    if (ticksLeft % 20 == 0)
+                    if (player.tickCount % 20 == 0)
                     {
                         // LOGGER.info("[BleedOut] Player {} bleeding: {} ticks left ({} sec), pose={}, health={}, deltaMovement={}", 
                         //     player.getName().getString(), ticksLeft, ticksLeft / 20, player.getPose(), 
@@ -1165,5 +1175,58 @@ public class BleedOutHandler
             return revivingPlayers.get(playerId).ticksLeft / 20; // Конвертируем тики в секунды
         }
         return 0;
+    }
+
+    @SubscribeEvent
+    public static void onRegisterCommands(RegisterCommandsEvent event)
+    {
+        CommandDispatcher<CommandSourceStack> dispatcher = event.getDispatcher();
+        
+        dispatcher.register(
+            Commands.literal("revive")
+                .requires(source -> source.hasPermission(2)) // Требуется уровень 2 (op)
+                .executes(context -> {
+                    // Оживить себя (если отправитель - игрок)
+                    CommandSourceStack source = context.getSource();
+                    if (source.getEntity() instanceof ServerPlayer player)
+                    {
+                        if (isBleeding(player))
+                        {
+                            revivePlayer(player);
+                            source.sendSuccess(() -> Component.translatable("bleedout.command.revive.success.self"), true);
+                            return 1;
+                        }
+                        else
+                        {
+                            source.sendFailure(Component.translatable("bleedout.command.revive.failure.self"));
+                            return 0;
+                        }
+                    }
+                    else
+                    {
+                        source.sendFailure(Component.literal("Only players can execute this command without arguments."));
+                        return 0;
+                    }
+                })
+                .then(Commands.argument("target", EntityArgument.player())
+                    .executes(context -> {
+                        // Оживить указанного игрока
+                        CommandSourceStack source = context.getSource();
+                        ServerPlayer target = EntityArgument.getPlayer(context, "target");
+                        if (isBleeding(target))
+                        {
+                            revivePlayer(target);
+                            source.sendSuccess(() -> Component.translatable("bleedout.command.revive.success.other", target.getDisplayName()), true);
+                            target.sendSystemMessage(Component.translatable("bleedout.command.revive.success.other.notification"));
+                            return 1;
+                        }
+                        else
+                        {
+                            source.sendFailure(Component.translatable("bleedout.command.revive.failure.other", target.getDisplayName()));
+                            return 0;
+                        }
+                    })
+                )
+        );
     }
 }

@@ -89,6 +89,16 @@ public class Config
                     value -> value instanceof String
             );
 
+    public static final ForgeConfigSpec.BooleanValue ENABLE_SUICIDE = BUILDER
+            .comment("Enable suicide option while bleeding")
+            .comment("Разрешить самоубийство во время кровотечения")
+            .define("enableSuicide", true);
+
+    public static final ForgeConfigSpec.BooleanValue ENABLE_BLEEDOUT_TIMER = BUILDER
+            .comment("Enable bleedout timer (if false, players will bleed indefinitely until revived or killed)")
+            .comment("Включить таймер кровотечения (если отключено, игроки будут лежать бесконечно, пока их не поднимут или не убьют)")
+            .define("enableBleedoutTimer", true);
+
     static final ForgeConfigSpec SPEC = BUILDER.build();
 
     public static int bleedoutTime;
@@ -101,6 +111,8 @@ public class Config
     public static boolean bleedingPlayersIgnoredByMobs;
     public static List<? extends String> bleedingEffects;
     public static List<? extends String> disabledInputsWhileBleeding;
+    public static boolean enableSuicide;
+    public static boolean enableBleedoutTimer;
 
     @SubscribeEvent
     static void onLoad(final ModConfigEvent event)
@@ -121,5 +133,7 @@ public class Config
         bleedingPlayersIgnoredByMobs = BLEEDING_PLAYERS_IGNORED_BY_MOBS.get();
         bleedingEffects = BLEEDING_EFFECTS.get();
         disabledInputsWhileBleeding = DISABLED_INPUTS_WHILE_BLEEDING.get();
+        enableSuicide = ENABLE_SUICIDE.get();
+        enableBleedoutTimer = ENABLE_BLEEDOUT_TIMER.get();
     }
 }
