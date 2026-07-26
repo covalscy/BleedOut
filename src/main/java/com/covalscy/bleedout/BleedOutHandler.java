@@ -364,13 +364,9 @@ public class BleedOutHandler
                         applyBleedingEffects(player);
                     }
                     
-                    Pose currentPose = player.getPose();
-                    if (currentPose != Pose.SWIMMING)
+                    if (player.getForcedPose() != Pose.SWIMMING)
                     {
                         player.setForcedPose(Pose.SWIMMING);
-                        player.setPose(Pose.SWIMMING);
-                        player.refreshDimensions();
-                        poseSetForPlayers.put(playerId, true);
                     }
                     
                     player.setJumping(false);
@@ -519,8 +515,6 @@ public class BleedOutHandler
         poseSetForPlayers.put(playerId, false);
         
         player.setForcedPose(Pose.SWIMMING);
-        player.setPose(Pose.SWIMMING);
-        player.refreshDimensions();
         poseSetForPlayers.put(playerId, true);
         
         player.getPersistentData().putBoolean("bleedout:bleeding", true);
@@ -869,8 +863,6 @@ public class BleedOutHandler
         player.setHealth(player.getMaxHealth() * 0.5f);
         
         player.setForcedPose(null);
-        player.setPose(Pose.STANDING);
-        player.refreshDimensions();
     }
 
     public static int getReviveTimeLeft(Player player)
