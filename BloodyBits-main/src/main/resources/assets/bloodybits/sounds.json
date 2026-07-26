@@ -1,9 +1,0 @@
-{
-  "body_explosion": {
-    "subtitles": "sounds.bloodybits.body_explosion",
-    "sounds": [
-      "bloodybits:body_explosion_0",
-      "bloodybits:body_explosion_1"
-    ]
-  }
-}
