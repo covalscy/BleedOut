@@ -7,14 +7,12 @@ import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.ResourceLocation;
-import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.item.ItemStack;
 import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.client.event.InputEvent;
-import net.minecraftforge.client.event.InputEvent.InteractionKeyMappingTriggered;
 import net.minecraftforge.client.gui.overlay.ForgeGui;
 import net.minecraftforge.client.gui.overlay.IGuiOverlay;
 import net.minecraftforge.event.TickEvent;
@@ -30,28 +28,22 @@ import java.util.List;
 import java.util.Set;
 import java.util.HashSet;
 
-/**
- * Оверлей для отображения состояния кровотечения и прогресс-бара самоубийства
- */
 class BleedOutOverlay implements IGuiOverlay
 {
     private static final Logger LOGGER = LogUtils.getLogger();
-    private static int leftClickHoldTicks = 0; // Таймер зажатия ЛКМ
+    private static int leftClickHoldTicks = 0;
     
-    // Локальное отслеживание времени кровотечения
-    private static int bleedoutStartTicks = 0; // Начальное количество тиков кровотечения с сервера
-    private static long bleedoutStartTime = 0; // Время начала кровотечения в миллисекундах
+    private static int bleedoutStartTicks = 0;
+    private static long bleedoutStartTime = 0;
     private static boolean wasBleeding = false;
     private static boolean isCurrentlyBleeding = false;
     
-    // Локальное отслеживание времени возрождения
-    private static int reviveStartTicks = 0; // Начальное количество тиков возрождения
-    private static long reviveStartTime = 0; // Время начала возрождения в миллисекундах
+    private static int reviveStartTicks = 0;
+    private static long reviveStartTime = 0;
     private static boolean wasReviving = false;
     
-    // Отслеживание пульсации для воспроизведения звука
-    private static double lastSinValue = 0.0; // Предыдущее значение синуса для определения пика
-    private static long lastSoundPlayTime = 0; // Время последнего воспроизведения звука (для защиты от множественных воспроизведений)
+    private static double lastSinValue = 0.0;
+    private static long lastSoundPlayTime = 0;
 
     @Override
     public void render(ForgeGui gui, GuiGraphics guiGraphics, float partialTick, int width, int height)
@@ -62,14 +54,10 @@ class BleedOutOverlay implements IGuiOverlay
         if (player == null || mc.level == null)
             return;
 
-        // Проверяем состояние кровотечения через PersistentData
         boolean isBleeding = player.getPersistentData().getBoolean("bleedout:bleeding");
-        
-        // Проверяем состояние возрождения
         boolean isReviving = player.getPersistentData().getBoolean("bleedout:reviving");
         int reviveTicksFromServer = player.getPersistentData().getInt("bleedout:reviveTicks");
         
-        // Отслеживаем начало возрождения
         if (isReviving && !wasReviving)
         {
             reviveStartTicks = reviveTicksFromServer;
@@ -82,49 +70,38 @@ class BleedOutOverlay implements IGuiOverlay
             reviveStartTicks = 0;
         }
         
-        // Вычисляем текущее время возрождения локально
         int currentReviveTicks = 0;
         if (isReviving && reviveStartTicks > 0)
         {
             long elapsedMs = System.currentTimeMillis() - reviveStartTime;
-            int elapsedTicks = (int)(elapsedMs / 50); // 50ms = 1 tick
+            int elapsedTicks = (int)(elapsedMs / 50);
             currentReviveTicks = Math.max(0, reviveStartTicks - elapsedTicks);
         }
         
-        // Отслеживаем начало/конец кровотечения локально
-        // Используем wasBleeding из onClientTickEnd (через wasBleedingLastTick), а не локальную переменную
         boolean wasBleedingLast = wasBleedingLastTick();
-        
-        // Всегда читаем актуальное значение из PersistentData (может обновиться через пакет)
         int ticksLeftFromServer = player.getPersistentData().getInt("bleedout:ticksLeft");
         
         if (isBleeding && !wasBleedingLast)
         {
-            // Начало кровотечения - устанавливаем начальные значения
             if (ticksLeftFromServer > 0)
             {
                 bleedoutStartTicks = ticksLeftFromServer;
             }
             else
             {
-                // Пакет ещё не пришёл - используем конфиг как fallback
                 bleedoutStartTicks = Config.bleedoutTime * 20;
             }
             bleedoutStartTime = System.currentTimeMillis();
             isCurrentlyBleeding = true;
-            lastSinValue = -1.0; // Инициализируем для правильного определения первого перехода через ноль
+            lastSinValue = -1.0;
         }
         else if (isBleeding && wasBleedingLast)
         {
-            // Кровотечение продолжается - проверяем, не обновилось ли значение через пакет
-            // Если значение из PersistentData изменилось (пакет пришёл с задержкой), пересчитываем
             if (ticksLeftFromServer > 0 && (bleedoutStartTicks <= 0 || ticksLeftFromServer != bleedoutStartTicks))
             {
-                // Пакет пришёл позже или обновился - пересчитываем время начала
                 bleedoutStartTicks = ticksLeftFromServer;
                 bleedoutStartTime = System.currentTimeMillis();
             }
-            // Если bleedoutStartTicks всё ещё 0 (пакет не пришёл), но мы уже в кровотечении - используем fallback
             else if (bleedoutStartTicks <= 0 && bleedoutStartTime == 0)
             {
                 bleedoutStartTicks = Config.bleedoutTime * 20;
@@ -133,36 +110,30 @@ class BleedOutOverlay implements IGuiOverlay
         }
         else if (!isBleeding)
         {
-            // Сбрасываем состояние кровотечения, если isBleeding стал false
             isCurrentlyBleeding = false;
             bleedoutStartTicks = 0;
             bleedoutStartTime = 0;
-            lastSinValue = 0.0; // Сбрасываем отслеживание пульсации
-            lastSoundPlayTime = 0; // Сбрасываем таймер звука
+            lastSinValue = 0.0;
+            lastSoundPlayTime = 0;
         }
         
-        // Вычисляем текущее время кровотечения локально
         int currentBleedoutTicks = 0;
         if (isBleeding)
         {
-            // Если bleedoutStartTicks не установлен, используем конфиг как fallback
             int ticksToUse = bleedoutStartTicks > 0 ? bleedoutStartTicks : (Config.bleedoutTime * 20);
             
             if (ticksToUse > 0 && bleedoutStartTime > 0)
             {
-                // Локальный расчёт работает - используем его
                 long elapsedMs = System.currentTimeMillis() - bleedoutStartTime;
-                int elapsedTicks = (int)(elapsedMs / 50); // 50ms = 1 tick
+                int elapsedTicks = (int)(elapsedMs / 50);
                 currentBleedoutTicks = Math.max(0, ticksToUse - elapsedTicks);
             }
             else if (ticksToUse > 0)
             {
-                // bleedoutStartTime ещё не установлен (пакет не пришёл) - используем fallback напрямую
                 currentBleedoutTicks = ticksToUse;
             }
             else
             {
-                // Последний fallback - конфиг
                 currentBleedoutTicks = Config.bleedoutTime * 20;
             }
         }
@@ -174,13 +145,10 @@ class BleedOutOverlay implements IGuiOverlay
         int screenHeight = height;
         
         PoseStack poseStack = guiGraphics.pose();
-
         float uiScale = (float) Math.max(0.5, Math.min(3.0, ClientConfig.hudScale));
         
-        // === ОТРИСОВКА ДЛЯ КРОВОТОЧАЩЕГО ИГРОКА ===
         if (isBleeding)
         {
-            // Вычисляем прогресс кровотечения (0.0 = только началось, 1.0 = почти умер)
             float bleedoutProgress;
             if (Config.enableBleedoutTimer)
             {
@@ -190,86 +158,36 @@ class BleedOutOverlay implements IGuiOverlay
             }
             else
             {
-                // Если таймер отключен, плавно доводим прогресс до 0.25 за первые 5 секунд
                 long elapsedMs = System.currentTimeMillis() - bleedoutStartTime;
                 bleedoutProgress = Math.min(1.0f, (float) elapsedMs / 5000.0f) * 0.25f;
             }
             
-            // Базовое затемнение - увеличивается по мере кровотечения (от 0% до 100% прозрачности)
             float baseDarkness = bleedoutProgress * 1.0f;
-            
-            // Эффект сердцебиения - пульсация с самого начала кровотечения
-            // Используем bleedoutProgress напрямую для pulseProgress
             float pulseProgress = bleedoutProgress * 0.6f;
-            
-            // Используем время в миллисекундах для плавной анимации
             long currentTime = System.currentTimeMillis();
-       
             double heartbeatFrequency = 0.2;
-      
-            double heartbeatAmplitude = 0.1+ (pulseProgress * 0.3); 
- 
+            double heartbeatAmplitude = 0.1 + (pulseProgress * 0.3); 
             double sinValue = Math.sin(currentTime * heartbeatFrequency * 0.01);
-           
             double baseOffset = pulseProgress * 0.002; 
-            // Пульсация: от baseOffset до baseOffset + amplitude
             double heartbeatPulse = baseOffset + (sinValue * heartbeatAmplitude);
             
-            // Воспроизведение звука при достижении пика пульсации
-            // Отслеживаем переход через ноль снизу вверх (когда sinValue становится положительным)
             if (player instanceof LocalPlayer)
             {
-                // Проверяем переход через ноль снизу вверх
-                // Условие: sinValue стал положительным, а lastSinValue был отрицательным
-                // Используем небольшой порог для более надежного определения перехода
                 boolean crossedZeroUp = (sinValue > 0.05 && lastSinValue < -0.05);
-                
-                // Альтернативно: проверяем, когда sinValue достигает пика (близко к 1.0)
-                // Это более надежно, так как пик происходит реже
                 boolean atPeak = (sinValue > 0.9 && lastSinValue <= 0.9);
-                
-                // Используем любое из условий
                 boolean shouldPlaySound = crossedZeroUp || atPeak;
-                
-                // Проверяем, включен ли звук в конфиге
                 boolean soundEnabled = ClientConfig.enableHeartbeatSound;
-                
-                // Защита от множественных воспроизведений - минимум 500мс между звуками (частота пульсации)
-                // Используем уже существующую переменную currentTime
                 boolean enoughTimePassed = (currentTime - lastSoundPlayTime) >= 500;
                 
                 if (shouldPlaySound && enoughTimePassed && soundEnabled)
                 {
-                    // Воспроизводим звук сердцебиения
-                    // Используем громкость, зависящую от прогресса кровотечения (громче ближе к смерти)
-                    float volume = 0.6f + (pulseProgress * 0.2f); // От 0.6 до 0.8
-                    // Используем pitch для изменения тона
-                    float pitch = 1.0f; // Используем оригинальный pitch звука
-                    
-                    // Логирование для отладки (только первое воспроизведение)
-                    if (lastSoundPlayTime == 0)
-                    {
-                        LOGGER.info("[BleedOut] First heartbeat sound attempt: volume={}, pitch={}", volume, pitch);
-                        if (ModSounds.HEARTBEAT.get() != null)
-                        {
-                            LOGGER.info("[BleedOut] HEARTBEAT sound location: {}", ModSounds.HEARTBEAT.get().getLocation());
-                        }
-                        else
-                        {
-                            LOGGER.error("[BleedOut] HEARTBEAT sound is null!");
-                        }
-                    }
-                    
-                    // Используем кастомный звук сердцебиения
-                    // Увеличиваем громкость для теста
-                    float testVolume = Math.max(volume, 1.0f); // Miniмум 1.0 для теста
+                    float volume = 0.6f + (pulseProgress * 0.2f);
+                    float pitch = 1.0f;
+                    float testVolume = Math.max(volume, 1.0f);
                     
                     if (ModSounds.HEARTBEAT.get() != null)
                     {
                         boolean soundPlayed = false;
-                        String methodUsed = "none";
-                        
-                        // Способ 1: через level().playSound (стандартный способ)
                         if (player.level() != null)
                         {
                             try
@@ -277,114 +195,42 @@ class BleedOutOverlay implements IGuiOverlay
                                 player.level().playSound(player, player.getX(), player.getY(), player.getZ(), 
                                     ModSounds.HEARTBEAT.get(), SoundSource.PLAYERS, testVolume, pitch);
                                 soundPlayed = true;
-                                methodUsed = "level().playSound";
-                                if (lastSoundPlayTime == 0)
-                                {
-                                    LOGGER.info("[BleedOut] Heartbeat sound played via level().playSound");
-                                }
                             }
-                            catch (Exception e)
-                            {
-                                if (lastSoundPlayTime == 0)
-                                {
-                                    LOGGER.error("[BleedOut] Error with level().playSound: {}", e.getMessage());
-                                }
-                            }
+                            catch (Exception ignored) {}
                         }
                         
-                        // Способ 2: через player.playSound (fallback)
                         if (!soundPlayed)
                         {
                             try
                             {
                                 player.playSound(ModSounds.HEARTBEAT.get(), testVolume, pitch);
                                 soundPlayed = true;
-                                methodUsed = "player.playSound";
-                                if (lastSoundPlayTime == 0)
-                                {
-                                    LOGGER.info("[BleedOut] Heartbeat sound played via player.playSound");
-                                }
                             }
-                            catch (Exception e)
-                            {
-                                if (lastSoundPlayTime == 0)
-                                {
-                                    LOGGER.error("[BleedOut] Error with player.playSound: {}", e.getMessage());
-                                }
-                            }
-                        }
-                        
-                        // Способ 3: через SoundManager напрямую (последняя попытка)
-                        if (!soundPlayed && mc.getSoundManager() != null)
-                        {
-                            try
-                            {
-                                var soundManager = mc.getSoundManager();
-                                var soundEvent = ModSounds.HEARTBEAT.get();
-                                var soundInstance = new net.minecraft.client.resources.sounds.SimpleSoundInstance(
-                                    soundEvent,
-                                    SoundSource.PLAYERS,
-                                    testVolume,
-                                    pitch,
-                                    net.minecraft.util.RandomSource.create(),
-                                    player.getX(),
-                                    player.getY(),
-                                    player.getZ()
-                                );
-                                soundManager.play(soundInstance);
-                                soundPlayed = true;
-                                methodUsed = "SoundManager";
-                                if (lastSoundPlayTime == 0)
-                                {
-                                    LOGGER.info("[BleedOut] Heartbeat sound played via SoundManager");
-                                }
-                            }
-                            catch (Exception e)
-                            {
-                                if (lastSoundPlayTime == 0)
-                                {
-                                    LOGGER.error("[BleedOut] Error with SoundManager: {}", e.getMessage());
-                                }
-                            }
+                            catch (Exception ignored) {}
                         }
                         
                         if (soundPlayed)
                         {
-                            lastSoundPlayTime = currentTime; // Обновляем время последнего воспроизведения
+                            lastSoundPlayTime = currentTime;
                         }
-                        else if (lastSoundPlayTime == 0)
-                        {
-                            LOGGER.error("[BleedOut] All sound playback methods failed! Check sound file.");
-                        }
-                    }
-                    else
-                    {
-                        LOGGER.error("[BleedOut] ModSounds.HEARTBEAT.get() is null!");
                     }
                 }
             }
-            lastSinValue = sinValue; // Сохраняем текущее значение для следующего кадра
+            lastSinValue = sinValue;
             
-            // Итоговое затемнение = базовое + пульсация
-            // Максимальное затемнение до 1.0 (100% непрозрачности) - полностью черный экран
             float finalDarkness = (float) Math.max(0.0, Math.min(1.0, baseDarkness + heartbeatPulse));
-            
-            // Рендерим затемнение экрана (черный overlay)
-            // Конвертируем прозрачность (0.0-1.0) в альфа-канал (0-255 из 255)
             int alpha = (int) (finalDarkness * 255);
-            int darkColor = (alpha << 24) | 0x000000; // ARGB формат: AARRGGBB
+            int darkColor = (alpha << 24) | 0x000000;
             
             RenderSystem.enableBlend();
             RenderSystem.defaultBlendFunc();
             guiGraphics.fill(0, 0, screenWidth, screenHeight, darkColor);
             RenderSystem.disableBlend();
             
-            // Отображаем оставшееся время кровотечения (уменьшенный текст)
             String text;
             if (Config.enableBleedoutTimer)
             {
-                // Используем локально вычисленное время
-                int timeLeftSec = (int) Math.ceil(currentBleedoutTicks / 20.0); // Конвертируем тики в секунды, округляем вверх
+                int timeLeftSec = (int) Math.ceil(currentBleedoutTicks / 20.0);
                 text = net.minecraft.network.chat.Component.translatable("bleedout.hud.bleeding", timeLeftSec).getString();
             }
             else
@@ -394,78 +240,65 @@ class BleedOutOverlay implements IGuiOverlay
             int textWidth = mc.font.width(text);
             
             poseStack.pushPose();
-            float textScale = 0.7f * uiScale; // Базовый масштаб * масштаб из конфига
+            float textScale = 0.7f * uiScale;
             poseStack.scale(textScale, textScale, textScale);
-            // Корректируем позицию с учётом масштаба
             float scaledX = (screenWidth / 2.0f - (textWidth * textScale) / 2.0f) / textScale;
-            // Поднимаем текст ближе к центру
             float scaledY = (screenHeight / 2.0f + (20 * uiScale)) / textScale;
             poseStack.translate(scaledX, scaledY, 0);
-            guiGraphics.drawString(mc.font, text, 0, 0, 0xC0FF0000, false); // Красный с прозрачностью 75%
+            guiGraphics.drawString(mc.font, text, 0, 0, 0xC0FF0000, false);
             poseStack.popPose();
             
             if (Config.enableSuicide)
             {
-                // Отображаем подсказку "ЛКМ чтобы умереть"
                 String hintText = net.minecraft.network.chat.Component.translatable("bleedout.hud.hint.suicide").getString();
                 int hintWidth = mc.font.width(hintText);
                 
                 poseStack.pushPose();
-                float hintScale = 0.6f * uiScale; // Базовый масштаб * масштаб из конфига
+                float hintScale = 0.6f * uiScale;
                 poseStack.scale(hintScale, hintScale, hintScale);
                 float hintX = (screenWidth / 2.0f - (hintWidth * hintScale) / 2.0f) / hintScale;
-                // Поднимаем подсказку тоже
-                float hintY = (screenHeight / 2.0f + (35 * uiScale)) / hintScale; // Ниже основного текста
+                float hintY = (screenHeight / 2.0f + (35 * uiScale)) / hintScale;
                 poseStack.translate(hintX, hintY, 0);
-                guiGraphics.drawString(mc.font, hintText, 0, 0, 0x80808080, false); // Серый полупрозрачный
+                guiGraphics.drawString(mc.font, hintText, 0, 0, 0x80808080, false);
                 poseStack.popPose();
             }
             
-            // Отображаем прямоугольный прогресс-бар самоубийства, если ЛКМ зажат
             if (Config.enableSuicide && isBleeding && mc.options.keyAttack.isDown() && leftClickHoldTicks > 0)
             {
                 int suicideTicks = Config.suicideTime * 20;
                 float progress = Math.min(1.0f, (float) leftClickHoldTicks / suicideTicks);
                 
-                // Рисуем прямоугольный прогресс-бар по центру экрана (ближе к прицелу)
                 float centerX = screenWidth / 2.0f;
                 float centerY = screenHeight / 2.0f;
                 
-                // Размеры прогресс-бара (в 3 раза меньше)
                 int barWidth = Math.max(1, (int) Math.round(33 * uiScale));
                 int barHeight = Math.max(1, (int) Math.round(3 * uiScale));
                 int barX = (int)(centerX - barWidth / 2.0f);
-                // Поднимаем прогрессбар ближе к центру
-                int barY = (int)(centerY + (8 * uiScale)); // Ближе к прицелу
+                int barY = (int)(centerY + (8 * uiScale));
                 int progressWidth = (int)(barWidth * progress);
                 
-                // Включаем блендинг с явным указанием функций (как в minimap)
                 RenderSystem.enableBlend();
                 RenderSystem.blendFunc(
                     com.mojang.blaze3d.platform.GlStateManager.SourceFactor.SRC_ALPHA,
                     com.mojang.blaze3d.platform.GlStateManager.DestFactor.ONE_MINUS_SRC_ALPHA
                 );
                 
-                // Рисуем фон (темно-серый, менее прозрачный) - 0xAARRGGBB формат
                 guiGraphics.fill(barX, barY, barX + barWidth, barY + barHeight, 0xC0202020);
                 
-                // Рисуем прогресс (красный, менее прозрачный)
                 if (progressWidth > 0) {
                     guiGraphics.fill(barX, barY, barX + progressWidth, barY + barHeight, 0xC0FF0000);
                 }
                 
-                // Рисуем рамку (серая, менее прозрачная)
                 int border = Math.max(1, (int) Math.round(1 * uiScale));
-                guiGraphics.fill(barX, barY - border, barX + barWidth, barY, 0xC0808080); // Верх
-                guiGraphics.fill(barX, barY + barHeight, barX + barWidth, barY + barHeight + border, 0xC0808080); // Низ
-                guiGraphics.fill(barX - border, barY, barX, barY + barHeight, 0xC0808080); // Лево
-                guiGraphics.fill(barX + barWidth, barY, barX + barWidth + border, barY + barHeight, 0xC0808080); // Право
+                guiGraphics.fill(barX, barY - border, barX + barWidth, barY, 0xC0808080);
+                guiGraphics.fill(barX, barY + barHeight, barX + barWidth, barY + barHeight + border, 0xC0808080);
+                guiGraphics.fill(barX - border, barY, barX, barY + barHeight, 0xC0808080);
+                guiGraphics.fill(barX + barWidth, barY, barX + barWidth + border, barY + barHeight, 0xC0808080);
                 
                 RenderSystem.disableBlend();
             }
         }
         
-        // === ОТРИСОВКА ДЛЯ ВОЗРОЖДАЮЩЕГО ИГРОКА ===
         if (isReviving && currentReviveTicks > 0)
         {
             int totalReviveTicks = reviveStartTicks;
@@ -474,7 +307,6 @@ class BleedOutOverlay implements IGuiOverlay
 
             boolean localIsBleeding = player.getPersistentData().getBoolean("bleedout:bleeding");
             
-            // Отображаем текст возрождения
             String key = localIsBleeding ? "bleedout.hud.being_revived" : "bleedout.hud.reviving";
             String text = net.minecraft.network.chat.Component.translatable(key, timeLeftSec).getString();
             int textWidth = mc.font.width(text);
@@ -483,21 +315,18 @@ class BleedOutOverlay implements IGuiOverlay
             float textScale = 0.7f * uiScale;
             poseStack.scale(textScale, textScale, textScale);
             float scaledX = (screenWidth / 2.0f - (textWidth * textScale) / 2.0f) / textScale;
-            // Поднимаем текст немного выше (ближе к центру)
             float scaledY = (screenHeight / 2.0f + (35 * uiScale)) / textScale;
             poseStack.translate(scaledX, scaledY, 0);
-            guiGraphics.drawString(mc.font, text, 0, 0, 0xC0FFFFFF, false); // Белый с прозрачностью 75%
+            guiGraphics.drawString(mc.font, text, 0, 0, 0xC0FFFFFF, false);
             poseStack.popPose();
             
-            // Рисуем белый прогресс-бар возрождения
             float centerX = screenWidth / 2.0f;
             float centerY = screenHeight / 2.0f;
             
             int barWidth = Math.max(1, (int) Math.round(33 * uiScale));
             int barHeight = Math.max(1, (int) Math.round(3 * uiScale));
             int barX = (int)(centerX - barWidth / 2.0f);
-            // Поднимаем прогрессбар ближе к тексту
-            int barY = (int)(centerY + (45 * uiScale)); // Ниже текста возрождения, но выше чем было
+            int barY = (int)(centerY + (45 * uiScale));
             int progressWidth = (int)(barWidth * progress);
             
             RenderSystem.enableBlend();
@@ -506,15 +335,12 @@ class BleedOutOverlay implements IGuiOverlay
                 com.mojang.blaze3d.platform.GlStateManager.DestFactor.ONE_MINUS_SRC_ALPHA
             );
             
-            // Рисуем фон (темно-серый)
             guiGraphics.fill(barX, barY, barX + barWidth, barY + barHeight, 0xC0202020);
             
-            // Рисуем прогресс (белый)
             if (progressWidth > 0) {
                 guiGraphics.fill(barX, barY, barX + progressWidth, barY + barHeight, 0xC0FFFFFF);
             }
             
-            // Рисуем рамку (серая)
             int border = Math.max(1, (int) Math.round(1 * uiScale));
             guiGraphics.fill(barX, barY - border, barX + barWidth, barY, 0xC0808080);
             guiGraphics.fill(barX, barY + barHeight, barX + barWidth, barY + barHeight + border, 0xC0808080);
@@ -525,7 +351,6 @@ class BleedOutOverlay implements IGuiOverlay
         }
     }
     
-    // Публичные методы для доступа к таймеру ЛКМ из обработчика тиков
     public static void incrementLeftClickTicks() {
         leftClickHoldTicks++;
     }
@@ -538,16 +363,6 @@ class BleedOutOverlay implements IGuiOverlay
         return leftClickHoldTicks;
     }
     
-    public static void setBleedoutStartTime(long time) {
-        bleedoutStartTime = time;
-        isCurrentlyBleeding = true;
-    }
-    
-    public static void stopBleeding() {
-        isCurrentlyBleeding = false;
-        leftClickHoldTicks = 0;
-    }
-    
     public static boolean wasBleedingLastTick() {
         return wasBleeding;
     }
@@ -557,27 +372,22 @@ class BleedOutOverlay implements IGuiOverlay
     }
 }
 
-/**
- * Обработчик клиентских тиков для управления состоянием кровотечения
- */
 @Mod.EventBusSubscriber(modid = BleedOutMod.MODID, bus = Mod.EventBusSubscriber.Bus.FORGE, value = Dist.CLIENT)
 class BleedOutClientHandler
 {
     private static final String DISABLE_ALL_INPUTS = "ALL";
     private static final String DISABLE_ALL_KEYBOARD_INPUTS = "ALL_KEYBOARD";
-    // === ОПТИМИЗАЦИЯ: Кешируем классы для рефлексии ===
+
     private static Class<?> cachedIGunClass = null;
     private static Class<?> cachedShootKeyClass = null;
     private static boolean tackModChecked = false;
 
-    // === СБРОС ПРИЦЕЛИВАНИЯ (ADS) ===
     private static boolean superbAdsChecked = false;
     private static java.lang.reflect.Field superbZoomField = null;
     private static boolean taczAdsChecked = false;
     private static java.lang.reflect.Method taczFromLocalPlayer = null;
     private static java.lang.reflect.Method taczAimMethod = null;
     
-    // === ОПТИМИЗАЦИЯ: Set для быстрой проверки гранат ===
     private static final Set<String> GRENADE_IDS = Set.of(
         "superbwarfare:rgo_grenade",
         "superbwarfare:hand_grenade",
@@ -588,7 +398,6 @@ class BleedOutClientHandler
         "superbwarfare:m18_smoke_grenade"
     );
     
-    // Инициализация кешированных классов TACZ
     static {
         if (ModList.get().isLoaded("tacz")) {
             try {
@@ -596,22 +405,15 @@ class BleedOutClientHandler
                 cachedShootKeyClass = Class.forName("com.tacz.guns.client.input.ShootKey");
                 tackModChecked = true;
             } catch (ClassNotFoundException e) {
-                // TACZ не найден или версия несовместима
                 tackModChecked = false;
             }
         }
     }
 
-    /**
-     * Сбрасывает прицеливание для SuperbWarfare и TACZ (клиент).
-     * Вызывается один раз при входе в кровотечение.
-     */
     private static void resetAimingForPlayer(LocalPlayer player)
     {
-        if (player == null)
-            return;
+        if (player == null) return;
 
-        // SuperbWarfare: ClientEventHandler.zoom = false
         if (ModList.get().isLoaded("superbwarfare")) {
             if (!superbAdsChecked) {
                 superbAdsChecked = true;
@@ -627,12 +429,10 @@ class BleedOutClientHandler
             if (superbZoomField != null) {
                 try {
                     superbZoomField.setBoolean(null, false);
-                } catch (Exception ignored) {
-                }
+                } catch (Exception ignored) {}
             }
         }
 
-        // TACZ: IClientPlayerGunOperator.fromLocalPlayer(player).aim(false)
         if (ModList.get().isLoaded("tacz")) {
             if (!taczAdsChecked) {
                 taczAdsChecked = true;
@@ -650,26 +450,22 @@ class BleedOutClientHandler
                     Object operator = taczFromLocalPlayer.invoke(null, player);
                     if (operator != null)
                         taczAimMethod.invoke(operator, false);
-                } catch (Exception ignored) {
-                }
+                } catch (Exception ignored) {}
             }
         }
     }
     
-    // Проверка, является ли предмет оружием TACZ (оптимизированная)
     private static boolean isTACZGun(ItemStack stack) {
         if (!tackModChecked || cachedIGunClass == null) return false;
         return cachedIGunClass.isInstance(stack.getItem());
     }
     
-    // Проверка, является ли предмет гранатой SuperbWarfare (оптимизированная)
     private static boolean isSuperWarfareGrenade(ItemStack stack) {
         if (!ModList.get().isLoaded("superbwarfare")) return false;
         ResourceLocation itemId = BuiltInRegistries.ITEM.getKey(stack.getItem());
         return GRENADE_IDS.contains(itemId.toString());
     }
     
-    // Проверка, является ли предмет оружием SuperbWarfare (не гранатой)
     private static boolean isSuperWarfareWeapon(ItemStack stack) {
         if (!ModList.get().isLoaded("superbwarfare")) return false;
         String className = stack.getItem().getClass().getName();
@@ -702,161 +498,127 @@ class BleedOutClientHandler
         return disabledInputs;
     }
 
+    private static boolean shouldDisableMouseButtons(Set<String> disabledInputs)
+    {
+        return disabledInputs != null && disabledInputs.contains(DISABLE_ALL_INPUTS);
+    }
+
+    private static boolean shouldDisableAttack(Set<String> disabledInputs)
+    {
+        if (disabledInputs == null) return false;
+        return disabledInputs.contains(DISABLE_ALL_INPUTS) ||
+               disabledInputs.contains("KEY.ATTACK") ||
+               disabledInputs.contains("ATTACK");
+    }
+
+    private static boolean shouldDisableUse(Set<String> disabledInputs)
+    {
+        if (disabledInputs == null) return false;
+        return disabledInputs.contains(DISABLE_ALL_INPUTS) ||
+               disabledInputs.contains("KEY.USE") ||
+               disabledInputs.contains("USE");
+    }
+
     private static boolean shouldDisableKeyboardInput(Set<String> disabledInputs, KeyMapping keyMapping)
     {
+        if (disabledInputs == null || keyMapping == null) return false;
         if (disabledInputs.contains(DISABLE_ALL_INPUTS) || disabledInputs.contains(DISABLE_ALL_KEYBOARD_INPUTS))
         {
             return true;
         }
 
-        if (keyMapping == null)
+        String keyName = keyMapping.getName();
+        if (keyName != null && disabledInputs.contains(keyName.toUpperCase(java.util.Locale.ROOT)))
         {
-            return false;
+            return true;
         }
 
-        String keyName = keyMapping.getName();
-        return keyName != null && disabledInputs.contains(keyName.toUpperCase(java.util.Locale.ROOT));
-    }
-
-    private static boolean shouldDisableMouseButtons(Set<String> disabledInputs)
-    {
-        return disabledInputs.contains(DISABLE_ALL_INPUTS);
-    }
-
-    private static boolean shouldDisableAttack(Set<String> disabledInputs)
-    {
-        return shouldDisableMouseButtons(disabledInputs) || disabledInputs.contains("KEY.ATTACK");
-    }
-
-    private static boolean shouldDisableUse(Set<String> disabledInputs)
-    {
-        return shouldDisableMouseButtons(disabledInputs) || disabledInputs.contains("KEY.USE");
+        String simpleName = keyName != null && keyName.startsWith("key.") ? keyName.substring(4) : keyName;
+        return simpleName != null && disabledInputs.contains(simpleName.toUpperCase(java.util.Locale.ROOT));
     }
 
     private static void releaseConfiguredKeyboardInputs(Minecraft mc, Player player, Set<String> disabledInputs)
     {
+        if (disabledInputs == null || disabledInputs.isEmpty()) return;
+
+        boolean disableAllKeyboard = disabledInputs.contains(DISABLE_ALL_KEYBOARD_INPUTS);
+        boolean disableAll = disabledInputs.contains(DISABLE_ALL_INPUTS);
+
         for (KeyMapping keyMapping : mc.options.keyMappings)
         {
-            if (shouldDisableKeyboardInput(disabledInputs, keyMapping) && keyMapping.isDown())
+            if (keyMapping == mc.options.keyAttack && !shouldDisableAttack(disabledInputs))
+            {
+                continue;
+            }
+
+            if (keyMapping == mc.options.keyUse && !shouldDisableUse(disabledInputs))
+            {
+                continue;
+            }
+
+            if (disableAll || disableAllKeyboard || shouldDisableKeyboardInput(disabledInputs, keyMapping))
             {
                 keyMapping.setDown(false);
             }
         }
-
-        if (shouldDisableKeyboardInput(disabledInputs, mc.options.keyShift))
-        {
-            player.setShiftKeyDown(false);
-        }
     }
-    
-    // Блокируем все клики мышью (атаку, использование предметов, взаимодействие) при кровотечении
-    @SubscribeEvent(priority = EventPriority.HIGHEST)
-    public static void onInteractionKeyMapping(InteractionKeyMappingTriggered event)
-    {
-        Minecraft mc = Minecraft.getInstance();
-        Player player = mc.player;
-        if (player != null)
-        {
-            boolean isBleeding = player.getPersistentData().getBoolean("bleedout:bleeding");
-            if (isBleeding)
-            {
-                Set<String> disabledInputs = getDisabledBleedingInputs();
-                if (event.isAttack())
-                {
-                    event.setCanceled(true);
-                    return;
-                }
 
-                if (shouldDisableMouseButtons(disabledInputs) || shouldDisableKeyboardInput(disabledInputs, event.getKeyMapping()))
-                {
-                    // Блокируем key mappings, но не движение мыши
-                    event.setCanceled(true);
-                }
-            }
-        }
-    }
-    
-    // Блокируем использование оружия SuperbWarfare и TACZ при кровотечении
     @SubscribeEvent(priority = EventPriority.HIGHEST)
     public static void onMouseButton(InputEvent.MouseButton.Pre event)
     {
         Minecraft mc = Minecraft.getInstance();
         Player player = mc.player;
-        
-        // Не блокируем клики если открыто меню или GUI
-        if (mc.screen != null || player == null)
-            return;
-        
-        int button = event.getButton();
-        
-        // Всегда разрешаем СКМ (2), кнопку 4 (3), кнопку 5 (4) - независимо от состояния
-        if (button == 2 || button == 3 || button == 4)
-        {
-            return; // Не блокируем эти кнопки
-        }
-        
+        if (player == null || mc.level == null) return;
+
         boolean isBleeding = player.getPersistentData().getBoolean("bleedout:bleeding");
-        if (isBleeding)
+        if (!isBleeding) return;
+
+        int button = event.getButton();
+        if (button == 2 || button == 3 || button == 4) return;
+
+        Set<String> disabledInputs = getDisabledBleedingInputs();
+        if (shouldDisableMouseButtons(disabledInputs))
         {
-            Set<String> disabledInputs = getDisabledBleedingInputs();
-            if (shouldDisableMouseButtons(disabledInputs))
+            event.setCanceled(true);
+            return;
+        }
+
+        ItemStack mainHand = player.getMainHandItem();
+        if (isSuperWarfareGrenade(mainHand))
+        {
+            if (button != 0 || shouldDisableAttack(disabledInputs))
             {
                 event.setCanceled(true);
                 return;
             }
-
-            ItemStack mainHand = player.getMainHandItem();
-            
-            // Проверяем, держит ли игрок что-то из SuperbWarfare в главной руке
-            if (isSuperWarfareGrenade(mainHand))
+        }
+        else if (isSuperWarfareWeapon(mainHand) || isTACZGun(mainHand))
+        {
+            if (button == 0 || button == 1)
             {
-                // Для гранаты разрешаем только ЛКМ (button 0)
-                // ПКМ (1) блокируем, остальные (2, 3, 4) уже разрешены выше
-                if (button != 0 || shouldDisableAttack(disabledInputs))
-                {
-                    event.setCanceled(true);
-                    return;
-                }
+                event.setCanceled(true);
+                return;
             }
-            else if (isSuperWarfareWeapon(mainHand) || isTACZGun(mainHand))
+        }
+        else
+        {
+            if ((button == 0 && shouldDisableAttack(disabledInputs)) || (button == 1 && shouldDisableUse(disabledInputs)) || button == 1)
             {
-                // Для оружия блокируем ЛКМ (0) и ПКМ (1)
-                // СКМ (2), кнопка 4 (3), кнопка 5 (4) уже разрешены выше
-                if (button == 0 || button == 1)
-                {
-                    event.setCanceled(true);
-                    return;
-                }
-            }
-            else
-            {
-                // Если в руках нет оружия/гранат, но игрок в кровотечении
-                // Блокируем только ПКМ (1), ЛКМ (0) разрешён для самоубийства
-                // СКМ (2), кнопка 4 (3), кнопка 5 (4) уже разрешены выше
-                if ((button == 0 && shouldDisableAttack(disabledInputs)) || (button == 1 && shouldDisableUse(disabledInputs)) || button == 1)
-                {
-                    event.setCanceled(true);
-                    return;
-                }
+                event.setCanceled(true);
+                return;
             }
         }
     }
-    
 
     @SubscribeEvent
     public static void onPlayerTick(PlayerTickEvent event)
     {
-        if (event.phase != TickEvent.Phase.END)
-            return;
+        if (event.phase != TickEvent.Phase.END) return;
         
         Player player = event.player;
-        if (player == null || !player.level().isClientSide)
-            return;
+        if (player == null || !player.level().isClientSide) return;
         
-        // Проверяем состояние кровотечения через PersistentData
         boolean isBleeding = player.getPersistentData().getBoolean("bleedout:bleeding");
-        
-        // Устанавливаем позу на клиенте - ВСЕГДА если isBleeding
         if (isBleeding && player.getPose() != net.minecraft.world.entity.Pose.SWIMMING)
         {
             player.setPose(net.minecraft.world.entity.Pose.SWIMMING);
@@ -866,19 +628,13 @@ class BleedOutClientHandler
     @SubscribeEvent(priority = EventPriority.HIGHEST)
     public static void onClientTick(TickEvent.ClientTickEvent event)
     {
-        if (event.phase != TickEvent.Phase.START)
-            return;
+        if (event.phase != TickEvent.Phase.START) return;
 
         Minecraft mc = Minecraft.getInstance();
         Player player = mc.player;
-        
-        if (player == null || mc.level == null)
-            return;
+        if (player == null || mc.level == null) return;
 
-        // Проверяем состояние кровотечения через PersistentData
         boolean isBleeding = player.getPersistentData().getBoolean("bleedout:bleeding");
-        
-        // Принудительно сбрасываем кнопки при кровотечении
         if (isBleeding)
         {
             ItemStack mainHand = player.getMainHandItem();
@@ -896,13 +652,11 @@ class BleedOutClientHandler
                 mc.options.keyUse.setDown(false);
             }
             
-            // Блокируем прыжки - сбрасываем клавишу пробела
             if (mc.options.keyJump.isDown() && shouldDisableKeyboardInput(disabledInputs, mc.options.keyJump))
             {
                 mc.options.keyJump.setDown(false);
             }
 
-            // Блокируем ванильный шифт/приседание во время кровотечения
             if (mc.options.keyShift.isDown() && shouldDisableKeyboardInput(disabledInputs, mc.options.keyShift))
             {
                 mc.options.keyShift.setDown(false);
@@ -914,22 +668,10 @@ class BleedOutClientHandler
 
             if (Config.disableMovementWhileBleeding)
             {
-                if (mc.options.keyUp.isDown())
-                {
-                    mc.options.keyUp.setDown(false);
-                }
-                if (mc.options.keyDown.isDown())
-                {
-                    mc.options.keyDown.setDown(false);
-                }
-                if (mc.options.keyLeft.isDown())
-                {
-                    mc.options.keyLeft.setDown(false);
-                }
-                if (mc.options.keyRight.isDown())
-                {
-                    mc.options.keyRight.setDown(false);
-                }
+                if (mc.options.keyUp.isDown()) mc.options.keyUp.setDown(false);
+                if (mc.options.keyDown.isDown()) mc.options.keyDown.setDown(false);
+                if (mc.options.keyLeft.isDown()) mc.options.keyLeft.setDown(false);
+                if (mc.options.keyRight.isDown()) mc.options.keyRight.setDown(false);
 
                 if (player instanceof LocalPlayer localPlayer && localPlayer.input != null)
                 {
@@ -940,26 +682,20 @@ class BleedOutClientHandler
                 }
             }
             
-            // Проверяем TACZ оружие и сбрасываем SHOOT_KEY (оптимизированная проверка)
             if (tackModChecked && cachedShootKeyClass != null && isTACZGun(mainHand))
             {
                 try
                 {
-                    // Получаем SHOOT_KEY из TACZ и принудительно "отпускаем" его
                     Object shootKey = cachedShootKeyClass.getField("SHOOT_KEY").get(null);
-                    if (shootKey instanceof net.minecraft.client.KeyMapping keyMapping)
+                    if (shootKey instanceof KeyMapping keyMapping)
                     {
-                        // Принудительно устанавливаем состояние "не нажата"
                         if (shouldDisableMouseButtons(disabledInputs) || shouldDisableKeyboardInput(disabledInputs, keyMapping))
                         {
                             keyMapping.setDown(false);
                         }
                     }
                 }
-                catch (Exception e)
-                {
-                    // Игнорируем ошибки рефлексии
-                }
+                catch (Exception ignored) {}
             }
         }
     }
@@ -967,42 +703,31 @@ class BleedOutClientHandler
     @SubscribeEvent
     public static void onClientTickEnd(TickEvent.ClientTickEvent event)
     {
-        if (event.phase != TickEvent.Phase.END)
-            return;
+        if (event.phase != TickEvent.Phase.END) return;
 
         Minecraft mc = Minecraft.getInstance();
         Player player = mc.player;
-        
-        if (player == null || mc.level == null)
-            return;
+        if (player == null || mc.level == null) return;
 
-        // Проверяем состояние кровотечения через PersistentData
         boolean isBleeding = player.getPersistentData().getBoolean("bleedout:bleeding");
         boolean wasBleeding = BleedOutOverlay.wasBleedingLastTick();
         
-        // Отслеживаем начало кровотечения только для сброса прицеливания;
-        // сам оверлей сам определяет момент старта по своему состоянию.
         if (isBleeding && !wasBleeding && player instanceof LocalPlayer localPlayer)
         {
             resetAimingForPlayer(localPlayer);
         }
         
-        // Обрабатываем ЛКМ для самоубийства (только если НЕ держим оружие)
         if (isBleeding)
         {
             ItemStack mainHand = player.getMainHandItem();
             Set<String> disabledInputs = getDisabledBleedingInputs();
-            
-            // Оптимизированная проверка оружия
             boolean holdingWeapon = isTACZGun(mainHand) || isSuperWarfareWeapon(mainHand);
             
-            // Обрабатываем самоубийство только если оно включено в конфиге, НЕ держим оружие и атака не отключена конфигом
             if (Config.enableSuicide && !holdingWeapon && !shouldDisableAttack(disabledInputs) && mc.options.keyAttack.isDown())
             {
                 int suicideTicks = Config.suicideTime * 20;
                 if (BleedOutOverlay.getLeftClickTicks() >= suicideTicks)
                 {
-                    // Отправляем запрос на сервер
                     com.covalscy.bleedout.network.BleedOutNetwork.INSTANCE.sendToServer(
                         new com.covalscy.bleedout.network.SuicideRequestPacket()
                     );
