@@ -117,7 +117,7 @@ public class Config
     @SubscribeEvent
     static void onLoad(final ModConfigEvent event)
     {
-        // Загружаем только когда это наш COMMON конфиг
+     
         if (event.getConfig().getType() != net.minecraftforge.fml.config.ModConfig.Type.COMMON)
             return;
         if (event.getConfig().getSpec() != SPEC)

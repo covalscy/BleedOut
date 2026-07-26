@@ -18,7 +18,7 @@ public class ClientPacketHandler
             Player player = mc.level.getPlayerByUUID(playerId);
             if (player != null)
             {
-                // Обновляем PersistentData на клиенте
+              
                 if (isBleeding)
                 {
                     player.getPersistentData().putBoolean("bleedout:bleeding", true);
@@ -40,7 +40,7 @@ public class ClientPacketHandler
         
         if (player != null)
         {
-            // Сохраняем данные о возрождении в PersistentData
+            
             player.getPersistentData().putBoolean("bleedout:reviving", isReviving);
             player.getPersistentData().putInt("bleedout:reviveTicks", ticksLeft);
         }

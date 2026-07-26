@@ -12,7 +12,7 @@ public class BleedOutUpdatePacket
 {
     private final UUID playerId;
     private final boolean isBleeding;
-    private final int ticksLeft; // Оставшееся время в тиках с сервера
+    private final int ticksLeft; 
 
     public BleedOutUpdatePacket(UUID playerId, boolean isBleeding, int ticksLeft)
     {
@@ -42,7 +42,7 @@ public class BleedOutUpdatePacket
         context.get().enqueueWork(() -> {
             if (context.get().getDirection().getReceptionSide().isClient())
             {
-                // Вызываем клиентский код только на клиенте
+                
                 DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> 
                     ClientPacketHandler.handleBleedOutUpdate(playerId, isBleeding, ticksLeft)
                 );

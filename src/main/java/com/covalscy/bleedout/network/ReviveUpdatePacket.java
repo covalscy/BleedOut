@@ -7,9 +7,7 @@ import net.minecraftforge.network.NetworkEvent;
 
 import java.util.function.Supplier;
 
-/**
- * Пакет для синхронизации состояния возрождения с клиентом
- */
+
 public class ReviveUpdatePacket
 {
     private final boolean isReviving;
@@ -38,7 +36,7 @@ public class ReviveUpdatePacket
     {
         NetworkEvent.Context context = contextSupplier.get();
         context.enqueueWork(() -> {
-            // Вызываем клиентский код только на клиенте
+           
             DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> 
                 ClientPacketHandler.handleReviveUpdate(packet.isReviving, packet.ticksLeft)
             );

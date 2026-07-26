@@ -16,7 +16,7 @@ public class SuicideRequestPacket
 
     public void encode(FriendlyByteBuf buffer)
     {
-        // Пакет пустой, только сигнал
+       
     }
 
     public static SuicideRequestPacket decode(FriendlyByteBuf buffer)
@@ -30,7 +30,7 @@ public class SuicideRequestPacket
             ServerPlayer player = context.get().getSender();
             if (Config.enableSuicide && player != null && BleedOutHandler.isBleeding(player))
             {
-                // Помечаем игрока как умирающего на сервере и убиваем его
+               
                 BleedOutHandler.killBleedingPlayer(player);
             }
         });

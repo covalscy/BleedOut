@@ -34,7 +34,6 @@ public class ClientConfig
     @SubscribeEvent
     static void onLoad(final ModConfigEvent event)
     {
-        // Загружаем только когда это наш CLIENT конфиг
         if (event.getConfig().getType() != net.minecraftforge.fml.config.ModConfig.Type.CLIENT)
             return;
         if (event.getConfig().getSpec() != SPEC)
