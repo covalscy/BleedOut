@@ -2,6 +2,8 @@ package com.covalscy.bleedout;
 
 import com.covalscy.bleedout.network.BleedOutNetwork;
 import com.covalscy.bleedout.network.SuicideRequestPacket;
+import com.mojang.blaze3d.platform.GlStateManager;
+import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.logging.LogUtils;
 import net.minecraft.client.DeltaTracker;
@@ -25,7 +27,7 @@ import org.slf4j.Logger;
 import java.util.List;
 
 /**
- * Оверлей для отображения состояния кровотечения и прогресс-бара самоубийства
+ * Оверлей для отображения состояния кровотечения и прогресс-бара самоубийства в оригинальном стиле BleedOut
  */
 class BleedOutOverlay implements LayeredDraw.Layer
 {
@@ -42,7 +44,6 @@ class BleedOutOverlay implements LayeredDraw.Layer
     
     private static double lastSinValue = 0.0;
     private static long lastSoundPlayTime = 0;
-
     private static boolean wasBleedingLastTick = false;
 
     public static boolean wasBleedingLastTick()
@@ -53,6 +54,21 @@ class BleedOutOverlay implements LayeredDraw.Layer
     public static void setWasBleedingLastTick(boolean val)
     {
         wasBleedingLastTick = val;
+    }
+
+    public static int getLeftClickTicks()
+    {
+        return leftClickHoldTicks;
+    }
+
+    public static void incrementLeftClickTicks()
+    {
+        leftClickHoldTicks++;
+    }
+
+    public static void resetLeftClickTicks()
+    {
+        leftClickHoldTicks = 0;
     }
 
     @Override
@@ -151,12 +167,13 @@ class BleedOutOverlay implements LayeredDraw.Layer
         if (!isBleeding && !isCurrentlyBleeding && !isReviving)
             return;
 
-        int width = mc.getWindow().getGuiScaledWidth();
-        int height = mc.getWindow().getGuiScaledHeight();
+        int screenWidth = mc.getWindow().getGuiScaledWidth();
+        int screenHeight = mc.getWindow().getGuiScaledHeight();
         
         PoseStack poseStack = guiGraphics.pose();
         float uiScale = (float) Math.max(0.5, Math.min(3.0, ClientConfig.hudScale));
         
+        // === ОТРИСОВКА ДЛЯ КРОВОТОЧАЩЕГО ИГРОКА ===
         if (isBleeding)
         {
             float bleedoutProgress;
@@ -211,142 +228,140 @@ class BleedOutOverlay implements LayeredDraw.Layer
             
             lastSinValue = sinValue;
             
-            float currentDarkness = (float) Math.max(0.0, Math.min(1.0, baseDarkness + heartbeatPulse));
-            int alpha = (int) (currentDarkness * 255);
-            int color = (alpha << 24);
+            float finalDarkness = (float) Math.max(0.0, Math.min(1.0, baseDarkness + heartbeatPulse));
+            int alpha = (int) (finalDarkness * 255);
+            int darkColor = (alpha << 24) | 0x000000;
             
-            guiGraphics.fill(0, 0, width, height, color);
+            RenderSystem.enableBlend();
+            RenderSystem.defaultBlendFunc();
+            guiGraphics.fill(0, 0, screenWidth, screenHeight, darkColor);
+            RenderSystem.disableBlend();
             
-            poseStack.pushPose();
-            poseStack.scale(uiScale, uiScale, 1.0f);
-            
-            int scaledWidth = (int) (width / uiScale);
-            int scaledHeight = (int) (height / uiScale);
-            
-            int textY = scaledHeight / 2 - 40;
-            
-            int secondsLeft = Math.max(0, (currentBleedoutTicks + 19) / 20);
-            
-            Component bleedText;
+            // Текст таймера кровотечения (красный с полупрозрачностью 75%)
+            String text;
             if (Config.enableBleedoutTimer)
             {
-                bleedText = Component.translatable("bleedout.hud.bleeding_timer", secondsLeft);
+                int timeLeftSec = (int) Math.ceil(currentBleedoutTicks / 20.0);
+                text = Component.translatable("bleedout.hud.bleeding", timeLeftSec).getString();
             }
             else
             {
-                bleedText = Component.translatable("bleedout.hud.bleeding_no_timer");
+                text = Component.translatable("bleedout.hud.bleeding_no_timer").getString();
             }
+            int textWidth = mc.font.width(text);
             
-            int textWidth = mc.font.width(bleedText);
-            int textX = (scaledWidth - textWidth) / 2;
+            poseStack.pushPose();
+            float textScale = 0.7f * uiScale;
+            poseStack.scale(textScale, textScale, textScale);
+            float scaledX = (screenWidth / 2.0f - (textWidth * textScale) / 2.0f) / textScale;
+            float scaledY = (screenHeight / 2.0f + (20 * uiScale)) / textScale;
+            poseStack.translate(scaledX, scaledY, 0);
+            guiGraphics.drawString(mc.font, text, 0, 0, 0xC0FF0000, false);
+            poseStack.popPose();
             
-            guiGraphics.drawString(mc.font, bleedText, textX + 1, textY + 1, 0xAA000000, false);
-            guiGraphics.drawString(mc.font, bleedText, textX, textY, 0xFFFF3333, false);
-
+            // Подсказка для самоубийства (серый полупрозрачный мелкий текст)
             if (Config.enableSuicide)
             {
-                Component suicideText = Component.translatable("bleedout.hud.suicide_prompt");
-                int suicideTextWidth = mc.font.width(suicideText);
-                int suicideTextX = (scaledWidth - suicideTextWidth) / 2;
-                int suicideTextY = textY + 15;
+                String hintText = Component.translatable("bleedout.hud.hint.suicide").getString();
+                int hintWidth = mc.font.width(hintText);
                 
-                guiGraphics.drawString(mc.font, suicideText, suicideTextX + 1, suicideTextY + 1, 0xAA000000, false);
-                guiGraphics.drawString(mc.font, suicideText, suicideTextX, suicideTextY, 0xFFFFAA00, false);
-
-                int suicideMaxTicks = Config.suicideTime * 20;
-                float progress = Math.min(1.0f, (float) leftClickHoldTicks / suicideMaxTicks);
+                poseStack.pushPose();
+                float hintScale = 0.6f * uiScale;
+                poseStack.scale(hintScale, hintScale, hintScale);
+                float hintX = (screenWidth / 2.0f - (hintWidth * hintScale) / 2.0f) / hintScale;
+                float hintY = (screenHeight / 2.0f + (35 * uiScale)) / hintScale;
+                poseStack.translate(hintX, hintY, 0);
+                guiGraphics.drawString(mc.font, hintText, 0, 0, 0x80808080, false);
+                poseStack.popPose();
+            }
+            
+            // Прямоугольный миниатюрный прогресс-бар самоубийства (только если удерживается ЛКМ)
+            if (Config.enableSuicide && isBleeding && mc.options.keyAttack.isDown() && leftClickHoldTicks > 0)
+            {
+                int suicideTicks = Config.suicideTime * 20;
+                float progress = Math.min(1.0f, (float) leftClickHoldTicks / suicideTicks);
                 
-                if (progress > 0)
-                {
-                    int barWidth = 100;
-                    int barHeight = 8;
-                    int barX = (scaledWidth - barWidth) / 2;
-                    int barY = suicideTextY + 15;
-                    
-                    guiGraphics.fill(barX - 1, barY - 1, barX + barWidth + 1, barY + barHeight + 1, 0xFF000000);
-                    guiGraphics.fill(barX, barY, barX + barWidth, barY + barHeight, 0xFF555555);
-                    
-                    int progressWidth = (int) (barWidth * progress);
-                    if (progressWidth > 0)
-                    {
-                        guiGraphics.fill(barX, barY, barX + progressWidth, barY + barHeight, 0xFFFF0000);
-                    }
+                float centerX = screenWidth / 2.0f;
+                float centerY = screenHeight / 2.0f;
+                
+                int barWidth = Math.max(1, (int) Math.round(33 * uiScale));
+                int barHeight = Math.max(1, (int) Math.round(3 * uiScale));
+                int barX = (int)(centerX - barWidth / 2.0f);
+                int barY = (int)(centerY + (8 * uiScale));
+                int progressWidth = (int)(barWidth * progress);
+                
+                RenderSystem.enableBlend();
+                RenderSystem.blendFunc(
+                    GlStateManager.SourceFactor.SRC_ALPHA,
+                    GlStateManager.DestFactor.ONE_MINUS_SRC_ALPHA
+                );
+                
+                guiGraphics.fill(barX, barY, barX + barWidth, barY + barHeight, 0xC0202020);
+                
+                if (progressWidth > 0) {
+                    guiGraphics.fill(barX, barY, barX + progressWidth, barY + barHeight, 0xC0FF0000);
                 }
+                
+                int border = Math.max(1, (int) Math.round(1 * uiScale));
+                guiGraphics.fill(barX, barY - border, barX + barWidth, barY, 0xC0808080);
+                guiGraphics.fill(barX, barY + barHeight, barX + barWidth, barY + barHeight + border, 0xC0808080);
+                guiGraphics.fill(barX - border, barY, barX, barY + barHeight, 0xC0808080);
+                guiGraphics.fill(barX + barWidth, barY, barX + barWidth + border, barY + barHeight, 0xC0808080);
+                
+                RenderSystem.disableBlend();
             }
-            
-            poseStack.popPose();
         }
-
-        if (isReviving)
+        
+        // === ОТРИСОВКА ДЛЯ ВОЗРОЖДАЮЩЕГО И ВОЗРОЖДАЕМОГО ИГРОКА ===
+        if (isReviving && currentReviveTicks > 0)
         {
-            poseStack.pushPose();
-            poseStack.scale(uiScale, uiScale, 1.0f);
-            
-            int scaledWidth = (int) (width / uiScale);
-            int scaledHeight = (int) (height / uiScale);
-            
-            int reviveY = isBleeding ? (scaledHeight / 2 + 20) : (scaledHeight / 2 - 20);
-            
             int totalReviveTicks = reviveStartTicks > 0 ? reviveStartTicks : (Config.reviveTime * 20);
-            int currentTicks = currentReviveTicks > 0 ? currentReviveTicks : reviveTicksFromServer;
-            
-            float reviveProgress = 1.0f - ((float) currentTicks / totalReviveTicks);
-            reviveProgress = Math.max(0.0f, Math.min(1.0f, reviveProgress));
-            
-            int secondsLeft = Math.max(0, (currentTicks + 19) / 20);
-            
-            Component reviveText = Component.translatable("bleedout.hud.reviving", secondsLeft);
-            int reviveTextWidth = mc.font.width(reviveText);
-            int reviveTextX = (scaledWidth - reviveTextWidth) / 2;
-            
-            guiGraphics.drawString(mc.font, reviveText, reviveTextX + 1, reviveY + 1, 0xAA000000, false);
-            guiGraphics.drawString(mc.font, reviveText, reviveTextX, reviveY, 0xFF55FF55, false);
+            float progress = 1.0f - ((float) currentReviveTicks / totalReviveTicks);
+            int timeLeftSec = (int) Math.ceil(currentReviveTicks / 20.0);
 
-            int barWidth = 120;
-            int barHeight = 10;
-            int barX = (scaledWidth - barWidth) / 2;
-            int barY = reviveY + 15;
+            boolean localIsBleeding = player.getPersistentData().getBoolean("bleedout:bleeding");
             
-            guiGraphics.fill(barX - 1, barY - 1, barX + barWidth + 1, barY + barHeight + 1, 0xFF000000);
-            guiGraphics.fill(barX, barY, barX + barWidth, barY + barHeight, 0xFF333333);
+            String key = localIsBleeding ? "bleedout.hud.being_revived" : "bleedout.hud.reviving";
+            String text = Component.translatable(key, timeLeftSec).getString();
+            int textWidth = mc.font.width(text);
             
-            int progressWidth = (int) (barWidth * reviveProgress);
-            if (progressWidth > 0)
-            {
-                guiGraphics.fill(barX, barY, barX + progressWidth, barY + barHeight, 0xFF00FF00);
-            }
-            
+            poseStack.pushPose();
+            float textScale = 0.7f * uiScale;
+            poseStack.scale(textScale, textScale, textScale);
+            float scaledX = (screenWidth / 2.0f - (textWidth * textScale) / 2.0f) / textScale;
+            float scaledY = (screenHeight / 2.0f + (35 * uiScale)) / textScale;
+            poseStack.translate(scaledX, scaledY, 0);
+            guiGraphics.drawString(mc.font, text, 0, 0, 0xC0FFFFFF, false);
             poseStack.popPose();
-        }
-    }
-
-    public static void tickLeftClickHold()
-    {
-        Minecraft mc = Minecraft.getInstance();
-        Player player = mc.player;
-        
-        if (player == null)
-        {
-            leftClickHoldTicks = 0;
-            return;
-        }
-
-        boolean isBleeding = player.getPersistentData().getBoolean("bleedout:bleeding");
-        
-        if (isBleeding && Config.enableSuicide && mc.options.keyAttack.isDown())
-        {
-            leftClickHoldTicks++;
             
-            int suicideMaxTicks = Config.suicideTime * 20;
-            if (leftClickHoldTicks >= suicideMaxTicks)
-            {
-                BleedOutNetwork.sendToServer(new SuicideRequestPacket());
-                leftClickHoldTicks = 0;
+            float centerX = screenWidth / 2.0f;
+            float centerY = screenHeight / 2.0f;
+            
+            int barWidth = Math.max(1, (int) Math.round(33 * uiScale));
+            int barHeight = Math.max(1, (int) Math.round(3 * uiScale));
+            int barX = (int)(centerX - barWidth / 2.0f);
+            int barY = (int)(centerY + (45 * uiScale));
+            int progressWidth = (int)(barWidth * progress);
+            
+            RenderSystem.enableBlend();
+            RenderSystem.blendFunc(
+                GlStateManager.SourceFactor.SRC_ALPHA,
+                GlStateManager.DestFactor.ONE_MINUS_SRC_ALPHA
+            );
+            
+            guiGraphics.fill(barX, barY, barX + barWidth, barY + barHeight, 0xC0202020);
+            
+            if (progressWidth > 0) {
+                guiGraphics.fill(barX, barY, barX + progressWidth, barY + barHeight, 0xC0FFFFFF);
             }
-        }
-        else
-        {
-            leftClickHoldTicks = 0;
+            
+            int border = Math.max(1, (int) Math.round(1 * uiScale));
+            guiGraphics.fill(barX, barY - border, barX + barWidth, barY, 0xC0808080);
+            guiGraphics.fill(barX, barY + barHeight, barX + barWidth, barY + barHeight + border, 0xC0808080);
+            guiGraphics.fill(barX - border, barY, barX, barY + barHeight, 0xC0808080);
+            guiGraphics.fill(barX + barWidth, barY, barX + barWidth + border, barY + barHeight, 0xC0808080);
+            
+            RenderSystem.disableBlend();
         }
     }
 }
@@ -360,21 +375,41 @@ public class BleedOutClientHandler
         Minecraft mc = Minecraft.getInstance();
         Player player = mc.player;
 
-        if (player == null) return;
+        if (player == null || mc.level == null) return;
 
         boolean isBleeding = player.getPersistentData().getBoolean("bleedout:bleeding");
         BleedOutOverlay.setWasBleedingLastTick(isBleeding);
-
-        BleedOutOverlay.tickLeftClickHold();
 
         if (isBleeding)
         {
             player.setForcedPose(Pose.SWIMMING);
             disableInputsForBleedingPlayer(mc);
+
+            if (Config.enableSuicide && mc.options.keyAttack.isDown())
+            {
+                int suicideTicks = Config.suicideTime * 20;
+                if (BleedOutOverlay.getLeftClickTicks() >= suicideTicks)
+                {
+                    BleedOutNetwork.sendToServer(new SuicideRequestPacket());
+                    BleedOutOverlay.resetLeftClickTicks();
+                }
+                else
+                {
+                    BleedOutOverlay.incrementLeftClickTicks();
+                }
+            }
+            else
+            {
+                BleedOutOverlay.resetLeftClickTicks();
+            }
         }
-        else if (player.getForcedPose() == Pose.SWIMMING)
+        else
         {
-            player.setForcedPose(null);
+            BleedOutOverlay.resetLeftClickTicks();
+            if (player.getForcedPose() == Pose.SWIMMING)
+            {
+                player.setForcedPose(null);
+            }
         }
     }
 
