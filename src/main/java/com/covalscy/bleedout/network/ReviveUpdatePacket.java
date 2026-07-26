@@ -1,48 +1,33 @@
 package com.covalscy.bleedout.network;
 
+import com.covalscy.bleedout.BleedOutMod;
 import net.minecraft.network.FriendlyByteBuf;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.fml.DistExecutor;
-import net.minecraftforge.network.NetworkEvent;
+import net.minecraft.network.codec.ByteBufCodecs;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.ResourceLocation;
+import net.neoforged.neoforge.network.handling.IPayloadContext;
 
-import java.util.function.Supplier;
-
-/**
- * Пакет для синхронизации состояния возрождения с клиентом
- */
-public class ReviveUpdatePacket
+public record ReviveUpdatePacket(boolean isReviving, int ticksLeft) implements CustomPacketPayload
 {
-    private final boolean isReviving;
-    private final int ticksLeft;
+    public static final Type<ReviveUpdatePacket> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(BleedOutMod.MODID, "revive_update"));
 
-    public ReviveUpdatePacket(boolean isReviving, int ticksLeft)
+    public static final StreamCodec<FriendlyByteBuf, ReviveUpdatePacket> STREAM_CODEC = StreamCodec.composite(
+            ByteBufCodecs.BOOL, ReviveUpdatePacket::isReviving,
+            ByteBufCodecs.INT, ReviveUpdatePacket::ticksLeft,
+            ReviveUpdatePacket::new
+    );
+
+    @Override
+    public Type<? extends CustomPacketPayload> type()
     {
-        this.isReviving = isReviving;
-        this.ticksLeft = ticksLeft;
+        return TYPE;
     }
 
-    public static void encode(ReviveUpdatePacket packet, FriendlyByteBuf buffer)
+    public void handle(IPayloadContext context)
     {
-        buffer.writeBoolean(packet.isReviving);
-        buffer.writeInt(packet.ticksLeft);
-    }
-
-    public static ReviveUpdatePacket decode(FriendlyByteBuf buffer)
-    {
-        boolean isReviving = buffer.readBoolean();
-        int ticksLeft = buffer.readInt();
-        return new ReviveUpdatePacket(isReviving, ticksLeft);
-    }
-
-    public static void handle(ReviveUpdatePacket packet, Supplier<NetworkEvent.Context> contextSupplier)
-    {
-        NetworkEvent.Context context = contextSupplier.get();
         context.enqueueWork(() -> {
-            // Вызываем клиентский код только на клиенте
-            DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> 
-                ClientPacketHandler.handleReviveUpdate(packet.isReviving, packet.ticksLeft)
-            );
+            ClientPacketHandler.handleReviveUpdate(isReviving, ticksLeft);
         });
-        context.setPacketHandled(true);
     }
 }

@@ -1,31 +1,31 @@
 package com.covalscy.bleedout;
 
-import net.minecraftforge.common.ForgeConfigSpec;
-import net.minecraftforge.eventbus.api.SubscribeEvent;
-import net.minecraftforge.fml.common.Mod;
-import net.minecraftforge.fml.event.config.ModConfigEvent;
+import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.common.EventBusSubscriber;
+import net.neoforged.fml.event.config.ModConfigEvent;
+import net.neoforged.neoforge.common.ModConfigSpec;
 
-@Mod.EventBusSubscriber(modid = BleedOutMod.MODID, bus = Mod.EventBusSubscriber.Bus.MOD)
+@EventBusSubscriber(modid = BleedOutMod.MODID, bus = EventBusSubscriber.Bus.MOD)
 public class ClientConfig
 {
-    private static final ForgeConfigSpec.Builder BUILDER = new ForgeConfigSpec.Builder();
+    private static final ModConfigSpec.Builder BUILDER = new ModConfigSpec.Builder();
 
-    public static final ForgeConfigSpec.DoubleValue HUD_SCALE = BUILDER
+    public static final ModConfigSpec.DoubleValue HUD_SCALE = BUILDER
             .comment("HUD interface scale (text and progress bars)")
             .comment("Масштаб интерфейса HUD (текст и прогресс-бары)")
             .defineInRange("hudScale", 1.5, 0.5, 3.0);
 
-    public static final ForgeConfigSpec.BooleanValue ENABLE_HEARTBEAT_SOUND = BUILDER
+    public static final ModConfigSpec.BooleanValue ENABLE_HEARTBEAT_SOUND = BUILDER
             .comment("Enable heartbeat sound during bleeding")
             .comment("Включить звук сердцебиения при кровотечении")
             .define("enableHeartbeatSound", true);
 
-    public static final ForgeConfigSpec.BooleanValue ENABLE_KNOCKED_TEAMMATE_RENDER = BUILDER
+    public static final ModConfigSpec.BooleanValue ENABLE_KNOCKED_TEAMMATE_RENDER = BUILDER
             .comment("Enable knocked teammate icon rendering in world")
             .comment("Включить рендер иконки нокнутых союзников в мире")
             .define("enableKnockedTeammateRender", true);
 
-    static final ForgeConfigSpec SPEC = BUILDER.build();
+    static final ModConfigSpec SPEC = BUILDER.build();
 
     public static double hudScale;
     public static boolean enableHeartbeatSound;
@@ -34,8 +34,7 @@ public class ClientConfig
     @SubscribeEvent
     static void onLoad(final ModConfigEvent event)
     {
-        // Загружаем только когда это наш CLIENT конфиг
-        if (event.getConfig().getType() != net.minecraftforge.fml.config.ModConfig.Type.CLIENT)
+        if (event.getConfig().getType() != net.neoforged.fml.config.ModConfig.Type.CLIENT)
             return;
         if (event.getConfig().getSpec() != SPEC)
             return;
@@ -45,4 +44,3 @@ public class ClientConfig
         enableKnockedTeammateRender = ENABLE_KNOCKED_TEAMMATE_RENDER.get();
     }
 }
-

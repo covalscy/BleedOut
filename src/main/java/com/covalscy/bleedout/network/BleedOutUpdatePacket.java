@@ -1,53 +1,37 @@
 package com.covalscy.bleedout.network;
 
+import com.covalscy.bleedout.BleedOutMod;
+import net.minecraft.core.UUIDUtil;
 import net.minecraft.network.FriendlyByteBuf;
-import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.fml.DistExecutor;
-import net.minecraftforge.network.NetworkEvent;
+import net.minecraft.network.codec.ByteBufCodecs;
+import net.minecraft.network.codec.StreamCodec;
+import net.minecraft.network.protocol.common.custom.CustomPacketPayload;
+import net.minecraft.resources.ResourceLocation;
+import net.neoforged.neoforge.network.handling.IPayloadContext;
 
 import java.util.UUID;
-import java.util.function.Supplier;
 
-public class BleedOutUpdatePacket
+public record BleedOutUpdatePacket(UUID playerId, boolean isBleeding, int ticksLeft) implements CustomPacketPayload
 {
-    private final UUID playerId;
-    private final boolean isBleeding;
-    private final int ticksLeft; // Оставшееся время в тиках с сервера
+    public static final Type<BleedOutUpdatePacket> TYPE = new Type<>(ResourceLocation.fromNamespaceAndPath(BleedOutMod.MODID, "bleedout_update"));
 
-    public BleedOutUpdatePacket(UUID playerId, boolean isBleeding, int ticksLeft)
+    public static final StreamCodec<FriendlyByteBuf, BleedOutUpdatePacket> STREAM_CODEC = StreamCodec.composite(
+            UUIDUtil.STREAM_CODEC, BleedOutUpdatePacket::playerId,
+            ByteBufCodecs.BOOL, BleedOutUpdatePacket::isBleeding,
+            ByteBufCodecs.INT, BleedOutUpdatePacket::ticksLeft,
+            BleedOutUpdatePacket::new
+    );
+
+    @Override
+    public Type<? extends CustomPacketPayload> type()
     {
-        this.playerId = playerId;
-        this.isBleeding = isBleeding;
-        this.ticksLeft = ticksLeft;
+        return TYPE;
     }
 
-    public void encode(FriendlyByteBuf buffer)
+    public void handle(IPayloadContext context)
     {
-        buffer.writeUUID(playerId);
-        buffer.writeBoolean(isBleeding);
-        buffer.writeInt(ticksLeft);
-    }
-
-    public static BleedOutUpdatePacket decode(FriendlyByteBuf buffer)
-    {
-        return new BleedOutUpdatePacket(
-            buffer.readUUID(),
-            buffer.readBoolean(),
-            buffer.readInt()
-        );
-    }
-
-    public void handle(Supplier<NetworkEvent.Context> context)
-    {
-        context.get().enqueueWork(() -> {
-            if (context.get().getDirection().getReceptionSide().isClient())
-            {
-                // Вызываем клиентский код только на клиенте
-                DistExecutor.unsafeRunWhenOn(Dist.CLIENT, () -> () -> 
-                    ClientPacketHandler.handleBleedOutUpdate(playerId, isBleeding, ticksLeft)
-                );
-            }
+        context.enqueueWork(() -> {
+            ClientPacketHandler.handleBleedOutUpdate(playerId, isBleeding, ticksLeft);
         });
-        context.get().setPacketHandled(true);
     }
 }
