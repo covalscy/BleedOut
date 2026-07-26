@@ -28,14 +28,8 @@ import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.client.event.InputEvent;
 import org.slf4j.Logger;
 
-import java.util.HashSet;
-import java.util.List;
-import java.util.Locale;
 import java.util.Set;
 
-/**
- * Оверлей для отображения состояния кровотечения и прогресс-бара самоубийства в оригинальном стиле BleedOut
- */
 class BleedOutOverlay implements LayeredDraw.Layer
 {
     private static final Logger LOGGER = LogUtils.getLogger();
@@ -180,7 +174,6 @@ class BleedOutOverlay implements LayeredDraw.Layer
         PoseStack poseStack = guiGraphics.pose();
         float uiScale = (float) Math.max(0.5, Math.min(3.0, ClientConfig.hudScale));
         
-        // === ОТРИСОВКА ДЛЯ КРОВОТОЧАЩЕГО ИГРОКА ===
         if (isBleeding)
         {
             float bleedoutProgress;
@@ -316,7 +309,6 @@ class BleedOutOverlay implements LayeredDraw.Layer
             }
         }
         
-        // === ОТРИСОВКА ДЛЯ ВОЗРОЖДАЮЩЕГО И ВОЗРОЖДАЕМОГО ИГРОКА ===
         if (isReviving && currentReviveTicks > 0)
         {
             int totalReviveTicks = reviveStartTicks > 0 ? reviveStartTicks : (Config.reviveTime * 20);
@@ -529,7 +521,6 @@ public class BleedOutClientHandler
                 player.setForcedPose(Pose.SWIMMING);
             }
 
-            // Блокируем клавиши прыжка и движения при необходимости
             if (mc.options.keyJump.isDown())
             {
                 mc.options.keyJump.setDown(false);
@@ -559,7 +550,6 @@ public class BleedOutClientHandler
                 }
             }
 
-            // Блокируем стрельбу из TACZ оружия (SHOOT_KEY)
             ItemStack mainHand = player.getMainHandItem();
             boolean holdingWeapon = isTACZGun(mainHand) || isSuperWarfareWeapon(mainHand);
 
@@ -576,7 +566,6 @@ public class BleedOutClientHandler
                 catch (Exception ignored) {}
             }
 
-            // Логика зажатия ЛКМ для самоубийства (ТОЛЬКО если НЕ держит оружие)
             if (Config.enableSuicide && !holdingWeapon && mc.options.keyAttack.isDown())
             {
                 int suicideTicks = Config.suicideTime * 20;
