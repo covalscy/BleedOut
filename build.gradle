@@ -55,6 +55,7 @@ repositories {
 }
 
 dependencies {
+    implementation "curse.maven:tacz-1-21-1-1353462:8493084"
 }
 
 tasks.named('processResources', ProcessResources).configure {
