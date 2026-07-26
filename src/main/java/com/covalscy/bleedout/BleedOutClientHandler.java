@@ -516,9 +516,10 @@ public class BleedOutClientHandler
 
         if (isBleeding)
         {
-            if (player.getForcedPose() != Pose.SWIMMING)
+            if (player.getPose() != Pose.SWIMMING || player.getForcedPose() != Pose.SWIMMING)
             {
                 player.setForcedPose(Pose.SWIMMING);
+                player.setPose(Pose.SWIMMING);
             }
 
             if (mc.options.keyJump.isDown())

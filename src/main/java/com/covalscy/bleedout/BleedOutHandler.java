@@ -334,9 +334,10 @@ public class BleedOutHandler
                         applyBleedingEffects(player);
                     }
                     
-                    if (player.getForcedPose() != Pose.SWIMMING)
+                    if (player.getPose() != Pose.SWIMMING || player.getForcedPose() != Pose.SWIMMING)
                     {
                         player.setForcedPose(Pose.SWIMMING);
+                        player.setPose(Pose.SWIMMING);
                     }
                     
                     player.setJumping(false);
