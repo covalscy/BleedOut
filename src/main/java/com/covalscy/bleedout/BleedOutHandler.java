@@ -373,6 +373,7 @@ public class BleedOutHandler
                         poseSetForPlayers.put(playerId, true);
                     }
                     
+                    player.setJumping(false);
                     var deltaMovement = player.getDeltaMovement();
 
                     if (deltaMovement.y > 0)

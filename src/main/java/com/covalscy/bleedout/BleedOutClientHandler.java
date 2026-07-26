@@ -12,19 +12,26 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.LayeredDraw;
 import net.minecraft.client.player.LocalPlayer;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.sounds.SoundSource;
 import net.minecraft.world.entity.Pose;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.item.ItemStack;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.SubscribeEvent;
+import net.neoforged.fml.ModList;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.client.event.InputEvent;
 import org.slf4j.Logger;
 
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.Set;
 
 /**
  * Оверлей для отображения состояния кровотечения и прогресс-бара самоубийства в оригинальном стиле BleedOut
@@ -237,7 +244,6 @@ class BleedOutOverlay implements LayeredDraw.Layer
             guiGraphics.fill(0, 0, screenWidth, screenHeight, darkColor);
             RenderSystem.disableBlend();
             
-            // Текст таймера кровотечения (красный с полупрозрачностью 75%)
             String text;
             if (Config.enableBleedoutTimer)
             {
@@ -259,7 +265,6 @@ class BleedOutOverlay implements LayeredDraw.Layer
             guiGraphics.drawString(mc.font, text, 0, 0, 0xC0FF0000, false);
             poseStack.popPose();
             
-            // Подсказка для самоубийства (серый полупрозрачный мелкий текст)
             if (Config.enableSuicide)
             {
                 String hintText = Component.translatable("bleedout.hud.hint.suicide").getString();
@@ -275,7 +280,6 @@ class BleedOutOverlay implements LayeredDraw.Layer
                 poseStack.popPose();
             }
             
-            // Прямоугольный миниатюрный прогресс-бар самоубийства (только если удерживается ЛКМ)
             if (Config.enableSuicide && isBleeding && mc.options.keyAttack.isDown() && leftClickHoldTicks > 0)
             {
                 int suicideTicks = Config.suicideTime * 20;
@@ -369,6 +373,138 @@ class BleedOutOverlay implements LayeredDraw.Layer
 @EventBusSubscriber(modid = BleedOutMod.MODID, bus = EventBusSubscriber.Bus.GAME, value = Dist.CLIENT)
 public class BleedOutClientHandler
 {
+    private static Class<?> cachedIGunClass = null;
+    private static Class<?> cachedShootKeyClass = null;
+    private static boolean tackModChecked = false;
+
+    private static boolean superbAdsChecked = false;
+    private static java.lang.reflect.Field superbZoomField = null;
+    private static boolean taczAdsChecked = false;
+    private static java.lang.reflect.Method taczFromLocalPlayer = null;
+    private static java.lang.reflect.Method taczAimMethod = null;
+    
+    private static final Set<String> GRENADE_IDS = Set.of(
+        "superbwarfare:rgo_grenade",
+        "superbwarfare:hand_grenade",
+        "superbwarfare:claymore_mine",
+        "superbwarfare:tm_62",
+        "superbwarfare:c4_bomb",
+        "superbwarfare:blu_43_mine",
+        "superbwarfare:m18_smoke_grenade"
+    );
+
+    static {
+        if (ModList.get().isLoaded("tacz")) {
+            try {
+                cachedIGunClass = Class.forName("com.tacz.guns.api.item.IGun");
+                cachedShootKeyClass = Class.forName("com.tacz.guns.client.input.ShootKey");
+                tackModChecked = true;
+            } catch (ClassNotFoundException e) {
+                tackModChecked = false;
+            }
+        }
+    }
+
+    private static boolean isTACZGun(ItemStack stack) {
+        if (!tackModChecked || cachedIGunClass == null || stack.isEmpty()) return false;
+        return cachedIGunClass.isInstance(stack.getItem());
+    }
+
+    private static boolean isSuperWarfareGrenade(ItemStack stack) {
+        if (!ModList.get().isLoaded("superbwarfare") || stack.isEmpty()) return false;
+        ResourceLocation itemId = BuiltInRegistries.ITEM.getKey(stack.getItem());
+        return GRENADE_IDS.contains(itemId.toString());
+    }
+
+    private static boolean isSuperWarfareWeapon(ItemStack stack) {
+        if (!ModList.get().isLoaded("superbwarfare") || stack.isEmpty()) return false;
+        String className = stack.getItem().getClass().getName();
+        return className.contains("superbwarfare") && !isSuperWarfareGrenade(stack);
+    }
+
+    private static void resetAimingForPlayer(LocalPlayer player) {
+        if (player == null) return;
+
+        if (ModList.get().isLoaded("superbwarfare")) {
+            if (!superbAdsChecked) {
+                superbAdsChecked = true;
+                try {
+                    Class<?> clientEventHandlerClass = Class.forName("com.atsuishio.superbwarfare.event.ClientEventHandler");
+                    java.lang.reflect.Field zoomField = clientEventHandlerClass.getDeclaredField("zoom");
+                    zoomField.setAccessible(true);
+                    superbZoomField = zoomField;
+                } catch (Exception ignored) {
+                    superbZoomField = null;
+                }
+            }
+            if (superbZoomField != null) {
+                try {
+                    superbZoomField.setBoolean(null, false);
+                } catch (Exception ignored) {}
+            }
+        }
+
+        if (ModList.get().isLoaded("tacz")) {
+            if (!taczAdsChecked) {
+                taczAdsChecked = true;
+                try {
+                    Class<?> clientOperatorClass = Class.forName("com.tacz.guns.api.client.gameplay.IClientPlayerGunOperator");
+                    taczFromLocalPlayer = clientOperatorClass.getDeclaredMethod("fromLocalPlayer", LocalPlayer.class);
+                    taczAimMethod = clientOperatorClass.getDeclaredMethod("aim", boolean.class);
+                } catch (Exception ignored) {
+                    taczFromLocalPlayer = null;
+                    taczAimMethod = null;
+                }
+            }
+            if (taczFromLocalPlayer != null && taczAimMethod != null) {
+                try {
+                    Object operator = taczFromLocalPlayer.invoke(null, player);
+                    if (operator != null)
+                        taczAimMethod.invoke(operator, false);
+                } catch (Exception ignored) {}
+            }
+        }
+    }
+
+    @SubscribeEvent(priority = EventPriority.HIGHEST)
+    public static void onMouseButton(InputEvent.MouseButton.Pre event)
+    {
+        Minecraft mc = Minecraft.getInstance();
+        Player player = mc.player;
+        if (player == null || mc.level == null) return;
+
+        boolean isBleeding = player.getPersistentData().getBoolean("bleedout:bleeding");
+        if (!isBleeding) return;
+
+        int button = event.getButton();
+        if (button == 2 || button == 3 || button == 4) return;
+
+        ItemStack mainHand = player.getMainHandItem();
+        boolean holdingWeapon = isTACZGun(mainHand) || isSuperWarfareWeapon(mainHand);
+
+        if (holdingWeapon)
+        {
+            if (button == 0 || button == 1)
+            {
+                event.setCanceled(true);
+            }
+        }
+        else if (isSuperWarfareGrenade(mainHand))
+        {
+            if (button != 0)
+            {
+                event.setCanceled(true);
+            }
+        }
+        else
+        {
+            if (button == 1)
+            {
+                event.setCanceled(true);
+            }
+        }
+    }
+
     @SubscribeEvent
     public static void onClientTick(ClientTickEvent.Post event)
     {
@@ -378,14 +514,67 @@ public class BleedOutClientHandler
         if (player == null || mc.level == null) return;
 
         boolean isBleeding = player.getPersistentData().getBoolean("bleedout:bleeding");
+        boolean wasBleeding = BleedOutOverlay.wasBleedingLastTick();
+
+        if (isBleeding && !wasBleeding && player instanceof LocalPlayer localPlayer)
+        {
+            resetAimingForPlayer(localPlayer);
+        }
         BleedOutOverlay.setWasBleedingLastTick(isBleeding);
 
         if (isBleeding)
         {
             player.setForcedPose(Pose.SWIMMING);
-            disableInputsForBleedingPlayer(mc);
 
-            if (Config.enableSuicide && mc.options.keyAttack.isDown())
+            // Блокируем клавиши прыжка и движения при необходимости
+            if (mc.options.keyJump.isDown())
+            {
+                mc.options.keyJump.setDown(false);
+            }
+            if (mc.options.keyShift.isDown())
+            {
+                mc.options.keyShift.setDown(false);
+            }
+            player.setShiftKeyDown(false);
+
+            if (Config.disableMovementWhileBleeding)
+            {
+                mc.options.keyUp.setDown(false);
+                mc.options.keyDown.setDown(false);
+                mc.options.keyLeft.setDown(false);
+                mc.options.keyRight.setDown(false);
+            }
+
+            if (player instanceof LocalPlayer localPlayer && localPlayer.input != null)
+            {
+                localPlayer.input.jumping = false;
+                localPlayer.input.shiftKeyDown = false;
+                if (Config.disableMovementWhileBleeding)
+                {
+                    localPlayer.input.forwardImpulse = 0;
+                    localPlayer.input.leftImpulse = 0;
+                }
+            }
+
+            // Блокируем стрельбу из TACZ оружия (SHOOT_KEY)
+            ItemStack mainHand = player.getMainHandItem();
+            boolean holdingWeapon = isTACZGun(mainHand) || isSuperWarfareWeapon(mainHand);
+
+            if (tackModChecked && cachedShootKeyClass != null && isTACZGun(mainHand))
+            {
+                try
+                {
+                    Object shootKey = cachedShootKeyClass.getField("SHOOT_KEY").get(null);
+                    if (shootKey instanceof KeyMapping keyMapping)
+                    {
+                        keyMapping.setDown(false);
+                    }
+                }
+                catch (Exception ignored) {}
+            }
+
+            // Логика зажатия ЛКМ для самоубийства (ТОЛЬКО если НЕ держит оружие)
+            if (Config.enableSuicide && !holdingWeapon && mc.options.keyAttack.isDown())
             {
                 int suicideTicks = Config.suicideTime * 20;
                 if (BleedOutOverlay.getLeftClickTicks() >= suicideTicks)
@@ -413,33 +602,18 @@ public class BleedOutClientHandler
         }
     }
 
-    private static void disableInputsForBleedingPlayer(Minecraft mc)
-    {
-        List<? extends String> disabledInputs = Config.disabledInputsWhileBleeding;
-        if (disabledInputs == null || disabledInputs.isEmpty()) return;
-
-        boolean disableAllKeyboard = disabledInputs.contains("ALL_KEYBOARD");
-        boolean disableAll = disabledInputs.contains("ALL");
-
-        if (disableAll || disableAllKeyboard)
-        {
-            KeyMapping.releaseAll();
-        }
-    }
-
     @SubscribeEvent(priority = EventPriority.HIGHEST)
     public static void onKeyInput(InputEvent.Key event)
     {
         Minecraft mc = Minecraft.getInstance();
         Player player = mc.player;
-        if (player == null) return;
+        if (player == null || mc.level == null) return;
 
         if (player.getPersistentData().getBoolean("bleedout:bleeding"))
         {
-            List<? extends String> disabledInputs = Config.disabledInputsWhileBleeding;
-            if (disabledInputs != null && (disabledInputs.contains("ALL") || disabledInputs.contains("ALL_KEYBOARD")))
+            if (mc.options.keyJump.isDown())
             {
-                KeyMapping.releaseAll();
+                mc.options.keyJump.setDown(false);
             }
         }
     }
