@@ -369,6 +369,7 @@ public class BleedOutHandler
                     {
                         player.setForcedPose(Pose.SWIMMING);
                         player.setPose(Pose.SWIMMING);
+                        player.refreshDimensions();
                         poseSetForPlayers.put(playerId, true);
                     }
                     
@@ -518,6 +519,7 @@ public class BleedOutHandler
         
         player.setForcedPose(Pose.SWIMMING);
         player.setPose(Pose.SWIMMING);
+        player.refreshDimensions();
         poseSetForPlayers.put(playerId, true);
         
         player.getPersistentData().putBoolean("bleedout:bleeding", true);
@@ -867,6 +869,7 @@ public class BleedOutHandler
         
         player.setForcedPose(null);
         player.setPose(Pose.STANDING);
+        player.refreshDimensions();
     }
 
     public static int getReviveTimeLeft(Player player)

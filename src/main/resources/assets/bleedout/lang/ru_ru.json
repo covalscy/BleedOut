@@ -1,6 +1,8 @@
 {
   "bleedout.hud.bleeding": "Кровотечение: %s сек",
-  "bleedout.hud.hint.suicide": "ЛКМ чтобы умереть",
+  "bleedout.hud.bleeding_timer": "Кровотечение: %s сек",
+  "bleedout.hud.hint.suicide": "Зажмите ЛКМ чтобы умереть",
+  "bleedout.hud.suicide_prompt": "Зажмите ЛКМ чтобы умереть",
   "bleedout.hud.reviving": "Возрождение: %s сек",
   "bleedout.hud.being_revived": "Вас возрождают: %s сек",
   "bleedout.hud.bleeding_no_timer": "Кровотечение...",

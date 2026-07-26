@@ -2,7 +2,6 @@ package com.covalscy.bleedout;
 
 import com.covalscy.bleedout.network.BleedOutNetwork;
 import com.covalscy.bleedout.network.SuicideRequestPacket;
-import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.logging.LogUtils;
 import net.minecraft.client.DeltaTracker;
@@ -11,25 +10,19 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.LayeredDraw;
 import net.minecraft.client.player.LocalPlayer;
-import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
-import net.minecraft.resources.ResourceLocation;
-import net.minecraft.sounds.SoundEvents;
 import net.minecraft.sounds.SoundSource;
+import net.minecraft.world.entity.Pose;
 import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.item.ItemStack;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.fml.ModList;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.client.event.InputEvent;
 import org.slf4j.Logger;
 
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 
 /**
  * Оверлей для отображения состояния кровотечения и прогресс-бара самоубийства
@@ -376,7 +369,12 @@ public class BleedOutClientHandler
 
         if (isBleeding)
         {
+            player.setForcedPose(Pose.SWIMMING);
             disableInputsForBleedingPlayer(mc);
+        }
+        else if (player.getForcedPose() == Pose.SWIMMING)
+        {
+            player.setForcedPose(null);
         }
     }
 
