@@ -15,11 +15,7 @@ import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
 import org.joml.Matrix4f;
 import org.joml.Quaternionf;
 
-/**
- * Рендерит иконку медицинского крестика над головой нокнутых союзников в 3D мире.
- * Отображается только для игроков в одной команде (scoreboard team).
- * Иконка видна сквозь стены (без теста глубины) и всегда повёрнута к камере (billboard).
- */
+
 @EventBusSubscriber(modid = BleedOutMod.MODID, value = Dist.CLIENT)
 public class KnockedTeammateRenderer {
 
