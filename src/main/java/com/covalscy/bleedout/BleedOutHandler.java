@@ -327,6 +327,7 @@ public class BleedOutHandler
         
         player.getPersistentData().putBoolean("bleedout:bleeding", true);
         player.getPersistentData().putInt("bleedout:ticksLeft", bleedoutTicks);
+        player.stopUsingItem();
         
         BloodyBitsCompat.setBleedingPlayer(player);
 
@@ -359,6 +360,7 @@ public class BleedOutHandler
         bleedingPlayers.remove(playerId);
         poseSetForPlayers.remove(playerId);
         player.getPersistentData().remove("bleedout:bleeding");
+        BloodyBitsCompat.onDeathBurst(player);
         BloodyBitsCompat.clearBleedingPlayer(player);
         
         com.covalscy.bleedout.network.BleedOutNetwork.sendToTrackingAndSelf(
@@ -438,6 +440,8 @@ public class BleedOutHandler
                         player.setDeltaMovement(horizMovement.x, Math.min(deltaMovement.y, 0.1), horizMovement.z);
                     }
                 }
+
+                BloodyBitsCompat.tickBleedingPlayer(player, ticksLeft);
 
                 player.getPersistentData().putInt("bleedout:ticksLeft", ticksLeft);
                 
@@ -551,6 +555,24 @@ public class BleedOutHandler
         }
     }
 
+    @SubscribeEvent(priority = EventPriority.HIGHEST)
+    public static void onPlayerAttackEntity(net.minecraftforge.event.entity.player.AttackEntityEvent event)
+    {
+        if (event.getEntity() instanceof ServerPlayer player && isBleeding(player))
+        {
+            event.setCanceled(true);
+        }
+    }
+
+    @SubscribeEvent(priority = EventPriority.HIGHEST)
+    public static void onPlayerInteractItem(net.minecraftforge.event.entity.player.PlayerInteractEvent.RightClickItem event)
+    {
+        if (event.getEntity() instanceof ServerPlayer player && isBleeding(player))
+        {
+            event.setCanceled(true);
+        }
+    }
+
     @SubscribeEvent
     public static void onPlayerLoggedOut(PlayerEvent.PlayerLoggedOutEvent event)
     {
@@ -610,11 +632,10 @@ public class BleedOutHandler
 
     private static ServerPlayer getServerPlayer(UUID playerId)
     {
-        for (ServerLevel level : net.minecraftforge.server.ServerLifecycleHooks.getCurrentServer().getAllLevels())
+        net.minecraft.server.MinecraftServer server = net.minecraftforge.server.ServerLifecycleHooks.getCurrentServer();
+        if (server != null)
         {
-            ServerPlayer player = level.getPlayerByUUID(playerId);
-            if (player != null)
-                return player;
+            return server.getPlayerList().getPlayer(playerId);
         }
         return null;
     }

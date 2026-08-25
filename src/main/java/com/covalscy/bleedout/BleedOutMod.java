@@ -37,9 +37,9 @@ public class BleedOutMod
 
     private void commonSetup(final FMLCommonSetupEvent event)
     {
-        
         event.enqueueWork(() -> {
             com.covalscy.bleedout.network.BleedOutNetwork.register();
+            TaczCompat.init();
         });
     }
 

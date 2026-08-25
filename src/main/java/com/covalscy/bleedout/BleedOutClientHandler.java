@@ -410,9 +410,19 @@ class BleedOutClientHandler
         }
     }
 
-    private static void resetAimingForPlayer(LocalPlayer player)
+    private static void resetShootingAndAimingForPlayer(LocalPlayer player)
     {
         if (player == null) return;
+
+        player.stopUsingItem();
+        player.resetAttackStrengthTicker();
+
+        Minecraft mc = Minecraft.getInstance();
+        if (mc.options != null)
+        {
+            if (mc.options.keyAttack != null) mc.options.keyAttack.setDown(false);
+            if (mc.options.keyUse != null) mc.options.keyUse.setDown(false);
+        }
 
         if (ModList.get().isLoaded("superbwarfare")) {
             if (!superbAdsChecked) {
@@ -433,25 +443,8 @@ class BleedOutClientHandler
             }
         }
 
-        if (ModList.get().isLoaded("tacz")) {
-            if (!taczAdsChecked) {
-                taczAdsChecked = true;
-                try {
-                    Class<?> clientOperatorClass = Class.forName("com.tacz.guns.api.client.gameplay.IClientPlayerGunOperator");
-                    taczFromLocalPlayer = clientOperatorClass.getDeclaredMethod("fromLocalPlayer", LocalPlayer.class);
-                    taczAimMethod = clientOperatorClass.getDeclaredMethod("aim", boolean.class);
-                } catch (Exception ignored) {
-                    taczFromLocalPlayer = null;
-                    taczAimMethod = null;
-                }
-            }
-            if (taczFromLocalPlayer != null && taczAimMethod != null) {
-                try {
-                    Object operator = taczFromLocalPlayer.invoke(null, player);
-                    if (operator != null)
-                        taczAimMethod.invoke(operator, false);
-                } catch (Exception ignored) {}
-            }
+        if (TaczCompat.isLoaded()) {
+            TaczCompat.resetClientShooting(player);
         }
     }
     
@@ -638,6 +631,7 @@ class BleedOutClientHandler
         if (isBleeding)
         {
             ItemStack mainHand = player.getMainHandItem();
+            boolean holdingWeapon = isTACZGun(mainHand) || isSuperWarfareWeapon(mainHand);
             Set<String> disabledInputs = getDisabledBleedingInputs();
 
             releaseConfiguredKeyboardInputs(mc, player, disabledInputs);
@@ -682,20 +676,15 @@ class BleedOutClientHandler
                 }
             }
             
-            if (tackModChecked && cachedShootKeyClass != null && isTACZGun(mainHand))
+            if (holdingWeapon)
             {
-                try
-                {
-                    Object shootKey = cachedShootKeyClass.getField("SHOOT_KEY").get(null);
-                    if (shootKey instanceof KeyMapping keyMapping)
-                    {
-                        if (shouldDisableMouseButtons(disabledInputs) || shouldDisableKeyboardInput(disabledInputs, keyMapping))
-                        {
-                            keyMapping.setDown(false);
-                        }
-                    }
-                }
-                catch (Exception ignored) {}
+                if (mc.options.keyAttack.isDown()) mc.options.keyAttack.setDown(false);
+                if (mc.options.keyUse.isDown()) mc.options.keyUse.setDown(false);
+            }
+
+            if (player instanceof LocalPlayer localPlayer && TaczCompat.isLoaded())
+            {
+                TaczCompat.tickClientShooting(localPlayer);
             }
         }
     }
@@ -714,7 +703,7 @@ class BleedOutClientHandler
         
         if (isBleeding && !wasBleeding && player instanceof LocalPlayer localPlayer)
         {
-            resetAimingForPlayer(localPlayer);
+            resetShootingAndAimingForPlayer(localPlayer);
         }
         
         if (isBleeding)
