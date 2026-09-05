@@ -273,7 +273,7 @@ class BleedOutOverlay implements LayeredDraw.Layer
                 poseStack.popPose();
             }
             
-            if (Config.enableSuicide && isBleeding && mc.options.keyAttack.isDown() && leftClickHoldTicks > 0)
+            if (Config.enableSuicide && isBleeding && BleedOutClientHandler.isLeftClickPressed(mc) && leftClickHoldTicks > 0)
             {
                 int suicideTicks = Config.suicideTime * 20;
                 float progress = Math.min(1.0f, (float) leftClickHoldTicks / suicideTicks);
@@ -365,6 +365,9 @@ class BleedOutOverlay implements LayeredDraw.Layer
 @EventBusSubscriber(modid = BleedOutMod.MODID, bus = EventBusSubscriber.Bus.GAME, value = Dist.CLIENT)
 public class BleedOutClientHandler
 {
+    private static final String DISABLE_ALL_INPUTS = "ALL";
+    private static final String DISABLE_ALL_KEYBOARD_INPUTS = "ALL_KEYBOARD";
+
     private static Class<?> cachedIGunClass = null;
     private static Class<?> cachedShootKeyClass = null;
     private static boolean tackModChecked = false;
@@ -414,6 +417,62 @@ public class BleedOutClientHandler
         return className.contains("superbwarfare") && !isSuperWarfareGrenade(stack);
     }
 
+    private static Set<String> getDisabledBleedingInputs()
+    {
+        Set<String> disabledInputs = new java.util.HashSet<>();
+        disabledInputs.add("KEY.JUMP");
+        disabledInputs.add("KEY.SNEAK");
+
+        java.util.List<? extends String> configuredInputs = Config.disabledInputsWhileBleeding;
+        if (configuredInputs == null)
+            return disabledInputs;
+
+        for (String value : configuredInputs)
+        {
+            if (value == null || value.isBlank())
+                continue;
+
+            String normalized = value.trim();
+            if (!normalized.isEmpty())
+            {
+                disabledInputs.add(normalized.toUpperCase(java.util.Locale.ROOT));
+            }
+        }
+        return disabledInputs;
+    }
+
+    private static boolean shouldDisableKeyboardInput(Set<String> disabledInputs, KeyMapping keyMapping)
+    {
+        if (disabledInputs == null || keyMapping == null) return false;
+        if (disabledInputs.contains(DISABLE_ALL_INPUTS) || disabledInputs.contains(DISABLE_ALL_KEYBOARD_INPUTS))
+            return true;
+
+        String keyName = keyMapping.getName();
+        if (keyName != null && disabledInputs.contains(keyName.toUpperCase(java.util.Locale.ROOT)))
+            return true;
+
+        String simpleName = keyName != null && keyName.startsWith("key.") ? keyName.substring(4) : keyName;
+        return simpleName != null && disabledInputs.contains(simpleName.toUpperCase(java.util.Locale.ROOT));
+    }
+
+    private static void releaseConfiguredKeyboardInputs(Minecraft mc, Player player, Set<String> disabledInputs)
+    {
+        if (disabledInputs == null || disabledInputs.isEmpty() || mc.options == null) return;
+        boolean disableAllKeyboard = disabledInputs.contains(DISABLE_ALL_KEYBOARD_INPUTS);
+        boolean disableAll = disabledInputs.contains(DISABLE_ALL_INPUTS);
+
+        for (KeyMapping keyMapping : mc.options.keyMappings)
+        {
+            if (keyMapping == mc.options.keyAttack)
+                continue;
+
+            if (disableAll || disableAllKeyboard || shouldDisableKeyboardInput(disabledInputs, keyMapping))
+            {
+                keyMapping.setDown(false);
+            }
+        }
+    }
+
     private static void resetAimingForPlayer(LocalPlayer player) {
         if (player == null) return;
 
@@ -458,6 +517,27 @@ public class BleedOutClientHandler
         }
     }
 
+    private static boolean leftMouseButtonDown = false;
+
+    public static boolean isLeftClickPressed(Minecraft mc)
+    {
+        if (leftMouseButtonDown)
+            return true;
+        if (mc.options != null && mc.options.keyAttack.isDown())
+            return true;
+        if (mc.mouseHandler != null && mc.mouseHandler.isLeftPressed())
+            return true;
+        if (mc.getWindow() != null)
+        {
+            long window = mc.getWindow().getWindow();
+            if (window != 0)
+            {
+                return org.lwjgl.glfw.GLFW.glfwGetMouseButton(window, org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_LEFT) == org.lwjgl.glfw.GLFW.GLFW_PRESS;
+            }
+        }
+        return false;
+    }
+
     @SubscribeEvent(priority = EventPriority.HIGHEST)
     public static void onMouseButton(InputEvent.MouseButton.Pre event)
     {
@@ -465,35 +545,22 @@ public class BleedOutClientHandler
         Player player = mc.player;
         if (player == null || mc.level == null) return;
 
+        int button = event.getButton();
+        int action = event.getAction();
+        if (button == 0)
+        {
+            leftMouseButtonDown = (action != org.lwjgl.glfw.GLFW.GLFW_RELEASE);
+        }
+
         boolean isBleeding = player.getPersistentData().getBoolean("bleedout:bleeding");
         if (!isBleeding) return;
 
-        int button = event.getButton();
         if (button == 2 || button == 3 || button == 4) return;
 
-        ItemStack mainHand = player.getMainHandItem();
-        boolean holdingWeapon = isTACZGun(mainHand) || isSuperWarfareWeapon(mainHand);
-
-        if (holdingWeapon)
+        // Cancel attack and item use while bleeding so guns don't shoot & items aren't used
+        if (button == 0 || button == 1)
         {
-            if (button == 0 || button == 1)
-            {
-                event.setCanceled(true);
-            }
-        }
-        else if (isSuperWarfareGrenade(mainHand))
-        {
-            if (button != 0)
-            {
-                event.setCanceled(true);
-            }
-        }
-        else
-        {
-            if (button == 1)
-            {
-                event.setCanceled(true);
-            }
+            event.setCanceled(true);
         }
     }
 
@@ -521,6 +588,9 @@ public class BleedOutClientHandler
                 player.setForcedPose(Pose.SWIMMING);
                 player.setPose(Pose.SWIMMING);
             }
+
+            Set<String> disabledInputs = getDisabledBleedingInputs();
+            releaseConfiguredKeyboardInputs(mc, player, disabledInputs);
 
             if (mc.options.keyJump.isDown())
             {
@@ -552,7 +622,6 @@ public class BleedOutClientHandler
             }
 
             ItemStack mainHand = player.getMainHandItem();
-            boolean holdingWeapon = isTACZGun(mainHand) || isSuperWarfareWeapon(mainHand);
 
             if (tackModChecked && cachedShootKeyClass != null && isTACZGun(mainHand))
             {
@@ -567,7 +636,8 @@ public class BleedOutClientHandler
                 catch (Exception ignored) {}
             }
 
-            if (Config.enableSuicide && !holdingWeapon && mc.options.keyAttack.isDown())
+            boolean isLeftClicking = isLeftClickPressed(mc);
+            if (Config.enableSuicide && isLeftClicking)
             {
                 int suicideTicks = Config.suicideTime * 20;
                 if (BleedOutOverlay.getLeftClickTicks() >= suicideTicks)
@@ -587,6 +657,7 @@ public class BleedOutClientHandler
         }
         else
         {
+            leftMouseButtonDown = false;
             BleedOutOverlay.resetLeftClickTicks();
             if (player.getForcedPose() == Pose.SWIMMING)
             {
@@ -604,6 +675,8 @@ public class BleedOutClientHandler
 
         if (player.getPersistentData().getBoolean("bleedout:bleeding"))
         {
+            Set<String> disabledInputs = getDisabledBleedingInputs();
+            releaseConfiguredKeyboardInputs(mc, player, disabledInputs);
             if (mc.options.keyJump.isDown())
             {
                 mc.options.keyJump.setDown(false);

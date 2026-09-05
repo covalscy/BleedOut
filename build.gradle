@@ -59,6 +59,7 @@ dependencies {
 }
 
 tasks.named('processResources', ProcessResources).configure {
+    filteringCharset = 'UTF-8'
     var replaceProperties = [
             minecraft_version: minecraft_version,
             minecraft_version_range: minecraft_version_range,
@@ -77,6 +78,10 @@ tasks.named('processResources', ProcessResources).configure {
     filesMatching(['META-INF/neoforge.mods.toml', 'pack.mcmeta']) {
         expand replaceProperties
     }
+}
+
+tasks.withType(ProcessResources).configureEach {
+    filteringCharset = 'UTF-8'
 }
 
 tasks.withType(JavaCompile).configureEach {

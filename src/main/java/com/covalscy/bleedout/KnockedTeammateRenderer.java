@@ -60,9 +60,10 @@ public class KnockedTeammateRenderer {
             double distance = localPlayer.position().distanceTo(player.position());
             if (distance > MAX_RENDER_DISTANCE) continue;
 
-            double x = player.xo + (player.getX() - player.xo) * partialTick;
-            double y = player.yo + (player.getY() - player.yo) * partialTick;
-            double z = player.zo + (player.getZ() - player.zo) * partialTick;
+            Vec3 pos = player.getPosition(partialTick);
+            double x = pos.x;
+            double y = pos.y;
+            double z = pos.z;
 
             double iconY = y + player.getBbHeight() / 2.0;
 

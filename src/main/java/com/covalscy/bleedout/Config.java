@@ -100,18 +100,35 @@ public class Config
 
     static final ModConfigSpec SPEC = BUILDER.build();
 
-    public static int bleedoutTime;
-    public static int reviveTime;
-    public static double reviveDistance;
-    public static int suicideTime;
-    public static int bleedingHealth;
-    public static int initialDamageCooldown;
-    public static boolean disableMovementWhileBleeding;
-    public static boolean bleedingPlayersIgnoredByMobs;
-    public static List<? extends String> bleedingEffects;
-    public static List<? extends String> disabledInputsWhileBleeding;
-    public static boolean enableSuicide;
-    public static boolean enableBleedoutTimer;
+    public static int bleedoutTime = 45;
+    public static int reviveTime = 5;
+    public static double reviveDistance = 5.0;
+    public static int suicideTime = 3;
+    public static int bleedingHealth = 6;
+    public static int initialDamageCooldown = 10;
+    public static boolean disableMovementWhileBleeding = false;
+    public static boolean bleedingPlayersIgnoredByMobs = false;
+    public static List<? extends String> bleedingEffects = List.of("minecraft:slowness:1");
+    public static List<? extends String> disabledInputsWhileBleeding = List.of(
+            "key.parcool.Enable",
+            "key.parcool.Crawl",
+            "key.parcool.ClingToCliff",
+            "key.parcool.Breakfall",
+            "key.parcool.FastRun",
+            "key.parcool.Flipping",
+            "key.parcool.Vault",
+            "key.parcool.Dodge",
+            "key.parcool.RideZipline",
+            "key.parcool.WallJump",
+            "key.parcool.HangDown",
+            "key.parcool.WallSlide",
+            "key.parcool.HideInBlock",
+            "key.parcool.HorizontalWallRun",
+            "key.parcool.QuickTurn",
+            "key.parcool.openSetting"
+    );
+    public static boolean enableSuicide = true;
+    public static boolean enableBleedoutTimer = true;
 
     @SubscribeEvent
     static void onLoad(final ModConfigEvent event)

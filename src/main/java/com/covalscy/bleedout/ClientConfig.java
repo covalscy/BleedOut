@@ -27,9 +27,9 @@ public class ClientConfig
 
     static final ModConfigSpec SPEC = BUILDER.build();
 
-    public static double hudScale;
-    public static boolean enableHeartbeatSound;
-    public static boolean enableKnockedTeammateRender;
+    public static double hudScale = 1.5;
+    public static boolean enableHeartbeatSound = true;
+    public static boolean enableKnockedTeammateRender = true;
 
     @SubscribeEvent
     static void onLoad(final ModConfigEvent event)
