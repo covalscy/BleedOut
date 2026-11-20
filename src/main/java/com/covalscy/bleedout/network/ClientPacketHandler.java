@@ -39,8 +39,18 @@ public class ClientPacketHandler
         
         if (player != null)
         {
-            player.getPersistentData().putBoolean("bleedout:reviving", isReviving);
-            player.getPersistentData().putInt("bleedout:reviveTicks", ticksLeft);
+            if (isReviving)
+            {
+                player.getPersistentData().putBoolean("bleedout:reviving", true);
+                player.getPersistentData().putInt("bleedout:reviveTicks", ticksLeft);
+            }
+            else
+            {
+                player.getPersistentData().remove("bleedout:reviving");
+                player.getPersistentData().remove("bleedout:reviveTicks");
+            }
         }
+
+        com.covalscy.bleedout.BleedOutClientHandler.onRevivePacket(isReviving, ticksLeft);
     }
 }

@@ -1,0 +1,13 @@
+{
+  "required": false,
+  "minVersion": "0.8",
+  "package": "com.covalscy.bleedout.mixin.tacz",
+  "plugin": "com.covalscy.bleedout.compat.BleedOutMixinPlugin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "TaczEntityUtilMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  }
+}

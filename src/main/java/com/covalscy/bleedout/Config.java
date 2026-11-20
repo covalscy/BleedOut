@@ -150,5 +150,10 @@ public class Config
         disabledInputsWhileBleeding = DISABLED_INPUTS_WHILE_BLEEDING.get();
         enableSuicide = ENABLE_SUICIDE.get();
         enableBleedoutTimer = ENABLE_BLEEDOUT_TIMER.get();
+
+        if (event instanceof ModConfigEvent.Reloading)
+        {
+            com.covalscy.bleedout.network.BleedOutNetwork.sendSettingsToAll();
+        }
     }
 }

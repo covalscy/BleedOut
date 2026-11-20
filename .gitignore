@@ -35,3 +35,5 @@ run*/
 # Files from Forge MDK
 forge*changelog.txt
 /LayingOBB
+
+sable-player-ragdoll

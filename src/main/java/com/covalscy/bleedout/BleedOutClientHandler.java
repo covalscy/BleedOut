@@ -3,12 +3,14 @@ package com.covalscy.bleedout;
 import com.covalscy.bleedout.network.BleedOutNetwork;
 import com.covalscy.bleedout.network.SuicideRequestPacket;
 import com.mojang.blaze3d.platform.GlStateManager;
+import com.mojang.blaze3d.platform.InputConstants;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.logging.LogUtils;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.MouseHandler;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.LayeredDraw;
 import net.minecraft.client.player.LocalPlayer;
@@ -24,8 +26,11 @@ import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.ModList;
 import net.neoforged.fml.common.EventBusSubscriber;
+import net.neoforged.neoforge.client.event.ClientPlayerNetworkEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.client.event.InputEvent;
+import net.neoforged.neoforge.event.entity.player.AttackEntityEvent;
+import org.lwjgl.glfw.GLFW;
 import org.slf4j.Logger;
 
 import java.util.Set;
@@ -34,6 +39,7 @@ class BleedOutOverlay implements LayeredDraw.Layer
 {
     private static final Logger LOGGER = LogUtils.getLogger();
     private static int leftClickHoldTicks = 0;
+    private static boolean suicideSent = false;
     
     private static int bleedoutStartTicks = 0;
     private static long bleedoutStartTime = 0;
@@ -42,10 +48,45 @@ class BleedOutOverlay implements LayeredDraw.Layer
     private static int reviveStartTicks = 0;
     private static long reviveStartTime = 0;
     private static boolean wasReviving = false;
+    private static int serverReviveTicksLeft = 0;
+    private static long lastRevivePacketTime = 0;
+    private static boolean activeReviving = false;
     
     private static double lastSinValue = 0.0;
     private static long lastSoundPlayTime = 0;
     private static boolean wasBleedingLastTick = false;
+
+    public static void onRevivePacket(boolean isReviving, int ticksLeft)
+    {
+        if (isReviving)
+        {
+            boolean isNewRevive = !activeReviving || !wasReviving || reviveStartTicks <= 0 || (ticksLeft > serverReviveTicksLeft + 5);
+            activeReviving = true;
+            wasReviving = true;
+            serverReviveTicksLeft = ticksLeft;
+            lastRevivePacketTime = System.currentTimeMillis();
+
+            if (isNewRevive)
+            {
+                reviveStartTicks = ticksLeft > 0 ? ticksLeft : (SyncedSettings.reviveTime() * 20);
+                reviveStartTime = System.currentTimeMillis();
+            }
+        }
+        else
+        {
+            resetRevive();
+        }
+    }
+
+    public static void resetRevive()
+    {
+        activeReviving = false;
+        wasReviving = false;
+        reviveStartTicks = 0;
+        reviveStartTime = 0;
+        serverReviveTicksLeft = 0;
+        lastRevivePacketTime = 0;
+    }
 
     public static boolean wasBleedingLastTick()
     {
@@ -72,6 +113,16 @@ class BleedOutOverlay implements LayeredDraw.Layer
         leftClickHoldTicks = 0;
     }
 
+    public static boolean isSuicideSent()
+    {
+        return suicideSent;
+    }
+
+    public static void setSuicideSent(boolean val)
+    {
+        suicideSent = val;
+    }
+
     @Override
     public void render(GuiGraphics guiGraphics, DeltaTracker deltaTracker)
     {
@@ -82,27 +133,65 @@ class BleedOutOverlay implements LayeredDraw.Layer
             return;
 
         boolean isBleeding = player.getPersistentData().getBoolean("bleedout:bleeding");
-        boolean isReviving = player.getPersistentData().getBoolean("bleedout:reviving");
+        boolean isReviving = activeReviving || player.getPersistentData().getBoolean("bleedout:reviving");
         int reviveTicksFromServer = player.getPersistentData().getInt("bleedout:reviveTicks");
         
         if (isReviving && !wasReviving)
         {
-            reviveStartTicks = reviveTicksFromServer;
+            int initialTicks = serverReviveTicksLeft > 0 ? serverReviveTicksLeft : reviveTicksFromServer;
+            reviveStartTicks = initialTicks > 0 ? initialTicks : (SyncedSettings.reviveTime() * 20);
             reviveStartTime = System.currentTimeMillis();
+            serverReviveTicksLeft = reviveStartTicks;
+            lastRevivePacketTime = System.currentTimeMillis();
             wasReviving = true;
+            activeReviving = true;
+        }
+        else if (isReviving)
+        {
+            if (reviveStartTicks <= 0 || reviveStartTime == 0)
+            {
+                int initialTicks = serverReviveTicksLeft > 0 ? serverReviveTicksLeft : reviveTicksFromServer;
+                reviveStartTicks = initialTicks > 0 ? initialTicks : (SyncedSettings.reviveTime() * 20);
+                reviveStartTime = System.currentTimeMillis();
+                serverReviveTicksLeft = reviveStartTicks;
+                lastRevivePacketTime = System.currentTimeMillis();
+            }
+            else if (reviveTicksFromServer > 0 && reviveTicksFromServer > serverReviveTicksLeft + 5)
+            {
+                reviveStartTicks = reviveTicksFromServer;
+                reviveStartTime = System.currentTimeMillis();
+                serverReviveTicksLeft = reviveTicksFromServer;
+                lastRevivePacketTime = System.currentTimeMillis();
+            }
         }
         else if (!isReviving && wasReviving)
         {
-            wasReviving = false;
-            reviveStartTicks = 0;
+            resetRevive();
         }
         
         int currentReviveTicks = 0;
-        if (isReviving && reviveStartTicks > 0)
+        if (isReviving)
         {
-            long elapsedMs = System.currentTimeMillis() - reviveStartTime;
-            int elapsedTicks = (int)(elapsedMs / 50);
-            currentReviveTicks = Math.max(0, reviveStartTicks - elapsedTicks);
+            if (lastRevivePacketTime > 0 && serverReviveTicksLeft > 0)
+            {
+                long elapsedMs = System.currentTimeMillis() - lastRevivePacketTime;
+                int elapsedTicks = (int)(elapsedMs / 50);
+                currentReviveTicks = Math.max(0, serverReviveTicksLeft - elapsedTicks);
+            }
+            else if (reviveStartTime > 0 && reviveStartTicks > 0)
+            {
+                long elapsedMs = System.currentTimeMillis() - reviveStartTime;
+                int elapsedTicks = (int)(elapsedMs / 50);
+                currentReviveTicks = Math.max(0, reviveStartTicks - elapsedTicks);
+            }
+            else if (reviveTicksFromServer > 0)
+            {
+                currentReviveTicks = reviveTicksFromServer;
+            }
+            else
+            {
+                currentReviveTicks = SyncedSettings.reviveTime() * 20;
+            }
         }
         
         boolean wasBleedingLast = wasBleedingLastTick();
@@ -116,7 +205,7 @@ class BleedOutOverlay implements LayeredDraw.Layer
             }
             else
             {
-                bleedoutStartTicks = Config.bleedoutTime * 20;
+                bleedoutStartTicks = SyncedSettings.bleedoutTime() * 20;
             }
             bleedoutStartTime = System.currentTimeMillis();
             isCurrentlyBleeding = true;
@@ -131,7 +220,7 @@ class BleedOutOverlay implements LayeredDraw.Layer
             }
             else if (bleedoutStartTicks <= 0 && bleedoutStartTime == 0)
             {
-                bleedoutStartTicks = Config.bleedoutTime * 20;
+                bleedoutStartTicks = SyncedSettings.bleedoutTime() * 20;
                 bleedoutStartTime = System.currentTimeMillis();
             }
         }
@@ -147,7 +236,7 @@ class BleedOutOverlay implements LayeredDraw.Layer
         int currentBleedoutTicks = 0;
         if (isBleeding)
         {
-            int ticksToUse = bleedoutStartTicks > 0 ? bleedoutStartTicks : (Config.bleedoutTime * 20);
+            int ticksToUse = bleedoutStartTicks > 0 ? bleedoutStartTicks : (SyncedSettings.bleedoutTime() * 20);
             
             if (ticksToUse > 0 && bleedoutStartTime > 0)
             {
@@ -161,7 +250,7 @@ class BleedOutOverlay implements LayeredDraw.Layer
             }
             else
             {
-                currentBleedoutTicks = Config.bleedoutTime * 20;
+                currentBleedoutTicks = SyncedSettings.bleedoutTime() * 20;
             }
         }
         
@@ -177,9 +266,9 @@ class BleedOutOverlay implements LayeredDraw.Layer
         if (isBleeding)
         {
             float bleedoutProgress;
-            if (Config.enableBleedoutTimer)
+            if (SyncedSettings.enableBleedoutTimer())
             {
-                int totalBleedoutTicks = bleedoutStartTicks > 0 ? bleedoutStartTicks : (Config.bleedoutTime * 20);
+                int totalBleedoutTicks = bleedoutStartTicks > 0 ? bleedoutStartTicks : (SyncedSettings.bleedoutTime() * 20);
                 bleedoutProgress = totalBleedoutTicks > 0 ? 1.0f - ((float) currentBleedoutTicks / totalBleedoutTicks) : 0.0f;
                 bleedoutProgress = Math.max(0.0f, Math.min(1.0f, bleedoutProgress));
             }
@@ -238,7 +327,7 @@ class BleedOutOverlay implements LayeredDraw.Layer
             RenderSystem.disableBlend();
             
             String text;
-            if (Config.enableBleedoutTimer)
+            if (SyncedSettings.enableBleedoutTimer())
             {
                 int timeLeftSec = (int) Math.ceil(currentBleedoutTicks / 20.0);
                 text = Component.translatable("bleedout.hud.bleeding", timeLeftSec).getString();
@@ -258,7 +347,7 @@ class BleedOutOverlay implements LayeredDraw.Layer
             guiGraphics.drawString(mc.font, text, 0, 0, 0xC0FF0000, false);
             poseStack.popPose();
             
-            if (Config.enableSuicide)
+            if (SyncedSettings.enableSuicide() && !isReviving)
             {
                 String hintText = Component.translatable("bleedout.hud.hint.suicide").getString();
                 int hintWidth = mc.font.width(hintText);
@@ -273,10 +362,10 @@ class BleedOutOverlay implements LayeredDraw.Layer
                 poseStack.popPose();
             }
             
-            if (Config.enableSuicide && isBleeding && BleedOutClientHandler.isLeftClickPressed(mc) && leftClickHoldTicks > 0)
+            if (SyncedSettings.enableSuicide() && isBleeding && (BleedOutClientHandler.isLeftClickPressed(mc) || suicideSent) && (leftClickHoldTicks > 0 || suicideSent))
             {
-                int suicideTicks = Config.suicideTime * 20;
-                float progress = Math.min(1.0f, (float) leftClickHoldTicks / suicideTicks);
+                int suicideTicks = SyncedSettings.suicideTime() * 20;
+                float progress = suicideSent ? 1.0f : Math.min(1.0f, (float) leftClickHoldTicks / suicideTicks);
                 
                 float centerX = screenWidth / 2.0f;
                 float centerY = screenHeight / 2.0f;
@@ -309,10 +398,15 @@ class BleedOutOverlay implements LayeredDraw.Layer
             }
         }
         
-        if (isReviving && currentReviveTicks > 0)
+        if (isReviving)
         {
-            int totalReviveTicks = reviveStartTicks > 0 ? reviveStartTicks : (Config.reviveTime * 20);
-            float progress = 1.0f - ((float) currentReviveTicks / totalReviveTicks);
+            int totalReviveTicks = SyncedSettings.reviveTime() > 0 ? (SyncedSettings.reviveTime() * 20) : 100;
+            if (reviveStartTicks > totalReviveTicks)
+            {
+                totalReviveTicks = reviveStartTicks;
+            }
+            float progress = totalReviveTicks > 0 ? 1.0f - ((float) currentReviveTicks / totalReviveTicks) : 1.0f;
+            progress = Math.max(0.0f, Math.min(1.0f, progress));
             int timeLeftSec = (int) Math.ceil(currentReviveTicks / 20.0);
 
             boolean localIsBleeding = player.getPersistentData().getBoolean("bleedout:bleeding");
@@ -370,6 +464,9 @@ public class BleedOutClientHandler
 
     private static Class<?> cachedIGunClass = null;
     private static Class<?> cachedShootKeyClass = null;
+    private static Class<?> cachedAimKeyClass = null;
+    private static Class<?> cachedMeleeKeyClass = null;
+    private static Class<?> cachedReloadKeyClass = null;
     private static boolean tackModChecked = false;
 
     private static boolean superbAdsChecked = false;
@@ -377,6 +474,13 @@ public class BleedOutClientHandler
     private static boolean taczAdsChecked = false;
     private static java.lang.reflect.Method taczFromLocalPlayer = null;
     private static java.lang.reflect.Method taczAimMethod = null;
+
+    private static java.lang.reflect.Field isLeftPressedField = null;
+    private static java.lang.reflect.Field isRightPressedField = null;
+    private static boolean mouseFieldsInitialized = false;
+
+    private static boolean leftMouseButtonDown = false;
+    private static boolean requireLmbReleaseForSuicide = false;
     
     private static final Set<String> GRENADE_IDS = Set.of(
         "superbwarfare:rgo_grenade",
@@ -393,6 +497,9 @@ public class BleedOutClientHandler
             try {
                 cachedIGunClass = Class.forName("com.tacz.guns.api.item.IGun");
                 cachedShootKeyClass = Class.forName("com.tacz.guns.client.input.ShootKey");
+                cachedAimKeyClass = Class.forName("com.tacz.guns.client.input.AimKey");
+                cachedMeleeKeyClass = Class.forName("com.tacz.guns.client.input.MeleeKey");
+                cachedReloadKeyClass = Class.forName("com.tacz.guns.client.input.ReloadKey");
                 tackModChecked = true;
             } catch (ClassNotFoundException e) {
                 tackModChecked = false;
@@ -417,13 +524,103 @@ public class BleedOutClientHandler
         return className.contains("superbwarfare") && !isSuperWarfareGrenade(stack);
     }
 
+    private static void releaseKeyMapping(KeyMapping keyMapping)
+    {
+        if (keyMapping == null) return;
+        keyMapping.setDown(false);
+        while (keyMapping.consumeClick()) {}
+    }
+
+    private static void releaseStaticKeyMapping(Class<?> clazz, String fieldName)
+    {
+        if (clazz == null) return;
+        try
+        {
+            Object key = clazz.getField(fieldName).get(null);
+            if (key instanceof KeyMapping keyMapping)
+            {
+                releaseKeyMapping(keyMapping);
+            }
+        }
+        catch (Exception ignored) {}
+    }
+
+    private static void resetMouseHandlerPressed(Minecraft mc)
+    {
+        if (mc == null || mc.mouseHandler == null) return;
+        if (!mouseFieldsInitialized)
+        {
+            mouseFieldsInitialized = true;
+            try
+            {
+                isLeftPressedField = MouseHandler.class.getDeclaredField("isLeftPressed");
+                isLeftPressedField.setAccessible(true);
+            }
+            catch (Exception ignored) {}
+            try
+            {
+                isRightPressedField = MouseHandler.class.getDeclaredField("isRightPressed");
+                isRightPressedField.setAccessible(true);
+            }
+            catch (Exception ignored) {}
+        }
+        try
+        {
+            if (isLeftPressedField != null) isLeftPressedField.setBoolean(mc.mouseHandler, false);
+            if (isRightPressedField != null) isRightPressedField.setBoolean(mc.mouseHandler, false);
+        }
+        catch (Exception ignored) {}
+    }
+
+    public static void releaseAttackAndUseInputs(Minecraft mc, Player player)
+    {
+        if (mc.options != null)
+        {
+            releaseKeyMapping(mc.options.keyAttack);
+            releaseKeyMapping(mc.options.keyUse);
+            releaseKeyMapping(mc.options.keyPickItem);
+        }
+
+        try
+        {
+            KeyMapping.set(InputConstants.Type.MOUSE.getOrCreate(GLFW.GLFW_MOUSE_BUTTON_LEFT), false);
+            KeyMapping.set(InputConstants.Type.MOUSE.getOrCreate(GLFW.GLFW_MOUSE_BUTTON_RIGHT), false);
+        }
+        catch (Exception ignored) {}
+
+        resetMouseHandlerPressed(mc);
+
+        if (tackModChecked)
+        {
+            releaseStaticKeyMapping(cachedShootKeyClass, "SHOOT_KEY");
+            releaseStaticKeyMapping(cachedAimKeyClass, "AIM_KEY");
+            releaseStaticKeyMapping(cachedMeleeKeyClass, "MELEE_KEY");
+            releaseStaticKeyMapping(cachedReloadKeyClass, "RELOAD_KEY");
+        }
+
+        if (player instanceof LocalPlayer localPlayer)
+        {
+            resetAimingForPlayer(localPlayer);
+        }
+
+        if (player != null && player.isUsingItem())
+        {
+            player.stopUsingItem();
+        }
+
+        if (mc.gameMode != null)
+        {
+            mc.gameMode.stopDestroyBlock();
+        }
+    }
+
     private static Set<String> getDisabledBleedingInputs()
     {
         Set<String> disabledInputs = new java.util.HashSet<>();
         disabledInputs.add("KEY.JUMP");
         disabledInputs.add("KEY.SNEAK");
 
-        java.util.List<? extends String> configuredInputs = Config.disabledInputsWhileBleeding;
+        java.util.List<String> configuredInputs = SyncedSettings.disabledInputsWhileBleeding();
         if (configuredInputs == null)
             return disabledInputs;
 
@@ -444,7 +641,10 @@ public class BleedOutClientHandler
     private static boolean shouldDisableKeyboardInput(Set<String> disabledInputs, KeyMapping keyMapping)
     {
         if (disabledInputs == null || keyMapping == null) return false;
-        if (disabledInputs.contains(DISABLE_ALL_INPUTS) || disabledInputs.contains(DISABLE_ALL_KEYBOARD_INPUTS))
+        boolean isMouse = keyMapping.getKey().getType() == InputConstants.Type.MOUSE;
+        if (disabledInputs.contains(DISABLE_ALL_INPUTS))
+            return true;
+        if (disabledInputs.contains(DISABLE_ALL_KEYBOARD_INPUTS) && !isMouse)
             return true;
 
         String keyName = keyMapping.getName();
@@ -458,17 +658,12 @@ public class BleedOutClientHandler
     private static void releaseConfiguredKeyboardInputs(Minecraft mc, Player player, Set<String> disabledInputs)
     {
         if (disabledInputs == null || disabledInputs.isEmpty() || mc.options == null) return;
-        boolean disableAllKeyboard = disabledInputs.contains(DISABLE_ALL_KEYBOARD_INPUTS);
-        boolean disableAll = disabledInputs.contains(DISABLE_ALL_INPUTS);
 
         for (KeyMapping keyMapping : mc.options.keyMappings)
         {
-            if (keyMapping == mc.options.keyAttack)
-                continue;
-
-            if (disableAll || disableAllKeyboard || shouldDisableKeyboardInput(disabledInputs, keyMapping))
+            if (shouldDisableKeyboardInput(disabledInputs, keyMapping))
             {
-                keyMapping.setDown(false);
+                releaseKeyMapping(keyMapping);
             }
         }
     }
@@ -517,22 +712,40 @@ public class BleedOutClientHandler
         }
     }
 
-    private static boolean leftMouseButtonDown = false;
-
     public static boolean isLeftClickPressed(Minecraft mc)
     {
         if (leftMouseButtonDown)
-            return true;
-        if (mc.options != null && mc.options.keyAttack.isDown())
-            return true;
-        if (mc.mouseHandler != null && mc.mouseHandler.isLeftPressed())
             return true;
         if (mc.getWindow() != null)
         {
             long window = mc.getWindow().getWindow();
             if (window != 0)
             {
-                return org.lwjgl.glfw.GLFW.glfwGetMouseButton(window, org.lwjgl.glfw.GLFW.GLFW_MOUSE_BUTTON_LEFT) == org.lwjgl.glfw.GLFW.GLFW_PRESS;
+                if (GLFW.glfwGetMouseButton(window, GLFW.GLFW_MOUSE_BUTTON_LEFT) == GLFW.GLFW_PRESS)
+                {
+                    return true;
+                }
+                if (mc.options != null && mc.options.keyAttack != null)
+                {
+                    InputConstants.Key attackKey = mc.options.keyAttack.getKey();
+                    if (attackKey != null)
+                    {
+                        if (attackKey.getType() == InputConstants.Type.MOUSE)
+                        {
+                            if (GLFW.glfwGetMouseButton(window, attackKey.getValue()) == GLFW.GLFW_PRESS)
+                            {
+                                return true;
+                            }
+                        }
+                        else if (attackKey.getValue() > 0)
+                        {
+                            if (InputConstants.isKeyDown(window, attackKey.getValue()))
+                            {
+                                return true;
+                            }
+                        }
+                    }
+                }
             }
         }
         return false;
@@ -547,20 +760,84 @@ public class BleedOutClientHandler
 
         int button = event.getButton();
         int action = event.getAction();
+        boolean isBleeding = player.getPersistentData().getBoolean("bleedout:bleeding");
+
         if (button == 0)
         {
-            leftMouseButtonDown = (action != org.lwjgl.glfw.GLFW.GLFW_RELEASE);
+            if (action == GLFW.GLFW_RELEASE)
+            {
+                if (isBleeding && BleedOutOverlay.getLeftClickTicks() > 0 && !BleedOutOverlay.isSuicideSent())
+                {
+                    BleedOutNetwork.sendToServer(new SuicideRequestPacket(SuicideRequestPacket.Phase.CANCEL));
+                }
+                leftMouseButtonDown = false;
+                requireLmbReleaseForSuicide = false;
+                BleedOutOverlay.resetLeftClickTicks();
+                BleedOutOverlay.setSuicideSent(false);
+            }
+            else
+            {
+                leftMouseButtonDown = true;
+            }
         }
 
-        boolean isBleeding = player.getPersistentData().getBoolean("bleedout:bleeding");
         if (!isBleeding) return;
+
+        // NEVER cancel mouse release events so vanilla Minecraft and mods properly update their released state!
+        if (action == GLFW.GLFW_RELEASE)
+        {
+            return;
+        }
 
         if (button == 2 || button == 3 || button == 4) return;
 
-        // Cancel attack and item use while bleeding so guns don't shoot & items aren't used
+        // Cancel attack and item use presses while bleeding so guns don't shoot & items aren't used
         if (button == 0 || button == 1)
         {
             event.setCanceled(true);
+            releaseAttackAndUseInputs(mc, player);
+        }
+    }
+
+    @SubscribeEvent(priority = EventPriority.HIGHEST)
+    public static void onInteractionKeyMapping(InputEvent.InteractionKeyMappingTriggered event)
+    {
+        Minecraft mc = Minecraft.getInstance();
+        Player player = mc.player;
+        if (player == null || mc.level == null) return;
+
+        if (player.getPersistentData().getBoolean("bleedout:bleeding"))
+        {
+            event.setCanceled(true);
+            event.setSwingHand(false);
+            releaseAttackAndUseInputs(mc, player);
+        }
+    }
+
+    @SubscribeEvent(priority = EventPriority.HIGHEST)
+    public static void onClientAttackEntity(AttackEntityEvent event)
+    {
+        if (event.getEntity() instanceof Player player && player.getPersistentData().getBoolean("bleedout:bleeding"))
+        {
+            event.setCanceled(true);
+        }
+    }
+
+    /**
+     * Runs at the start of the client tick, before Minecraft handles key presses, so blocked keys never fire.
+     */
+    @SubscribeEvent
+    public static void onClientTickPre(ClientTickEvent.Pre event)
+    {
+        Minecraft mc = Minecraft.getInstance();
+        Player player = mc.player;
+        if (player == null || mc.level == null) return;
+        if (!player.getPersistentData().getBoolean("bleedout:bleeding")) return;
+
+        releaseAttackAndUseInputs(mc, player);
+        if (mc.screen == null)
+        {
+            releaseConfiguredKeyboardInputs(mc, player, getDisabledBleedingInputs());
         }
     }
 
@@ -570,19 +847,38 @@ public class BleedOutClientHandler
         Minecraft mc = Minecraft.getInstance();
         Player player = mc.player;
 
-        if (player == null || mc.level == null) return;
+        if (player == null || mc.level == null)
+        {
+            BleedOutOverlay.resetRevive();
+            return;
+        }
 
         boolean isBleeding = player.getPersistentData().getBoolean("bleedout:bleeding");
         boolean wasBleeding = BleedOutOverlay.wasBleedingLastTick();
 
-        if (isBleeding && !wasBleeding && player instanceof LocalPlayer localPlayer)
+        if (isBleeding && !wasBleeding)
         {
-            resetAimingForPlayer(localPlayer);
+            if (isLeftClickPressed(mc))
+            {
+                requireLmbReleaseForSuicide = true;
+            }
+            BleedOutOverlay.resetLeftClickTicks();
+            BleedOutOverlay.setSuicideSent(false);
+            releaseAttackAndUseInputs(mc, player);
+            if (player instanceof LocalPlayer localPlayer && localPlayer.input != null)
+            {
+                localPlayer.input.forwardImpulse = 0;
+                localPlayer.input.leftImpulse = 0;
+                localPlayer.input.jumping = false;
+                localPlayer.input.shiftKeyDown = false;
+            }
         }
         BleedOutOverlay.setWasBleedingLastTick(isBleeding);
 
         if (isBleeding)
         {
+            releaseAttackAndUseInputs(mc, player);
+
             if (player.getPose() != Pose.SWIMMING || player.getForcedPose() != Pose.SWIMMING)
             {
                 player.setForcedPose(Pose.SWIMMING);
@@ -602,7 +898,7 @@ public class BleedOutClientHandler
             }
             player.setShiftKeyDown(false);
 
-            if (Config.disableMovementWhileBleeding)
+            if (SyncedSettings.disableMovementWhileBleeding())
             {
                 mc.options.keyUp.setDown(false);
                 mc.options.keyDown.setDown(false);
@@ -614,56 +910,76 @@ public class BleedOutClientHandler
             {
                 localPlayer.input.jumping = false;
                 localPlayer.input.shiftKeyDown = false;
-                if (Config.disableMovementWhileBleeding)
+                if (SyncedSettings.disableMovementWhileBleeding())
                 {
                     localPlayer.input.forwardImpulse = 0;
                     localPlayer.input.leftImpulse = 0;
                 }
             }
 
-            ItemStack mainHand = player.getMainHandItem();
-
-            if (tackModChecked && cachedShootKeyClass != null && isTACZGun(mainHand))
-            {
-                try
-                {
-                    Object shootKey = cachedShootKeyClass.getField("SHOOT_KEY").get(null);
-                    if (shootKey instanceof KeyMapping keyMapping)
-                    {
-                        keyMapping.setDown(false);
-                    }
-                }
-                catch (Exception ignored) {}
-            }
-
             boolean isLeftClicking = isLeftClickPressed(mc);
-            if (Config.enableSuicide && isLeftClicking)
+
+            if (requireLmbReleaseForSuicide)
             {
-                int suicideTicks = Config.suicideTime * 20;
+                if (!isLeftClicking)
+                {
+                    requireLmbReleaseForSuicide = false;
+                }
+                BleedOutOverlay.resetLeftClickTicks();
+            }
+            else if (SyncedSettings.enableSuicide() && isLeftClicking)
+            {
+                int suicideTicks = SyncedSettings.suicideTime() * 20;
+                if (BleedOutOverlay.getLeftClickTicks() == 0 && !BleedOutOverlay.isSuicideSent())
+                {
+                    // The server starts its own timer here and checks it on CONFIRM
+                    BleedOutNetwork.sendToServer(new SuicideRequestPacket(SuicideRequestPacket.Phase.START));
+                }
                 if (BleedOutOverlay.getLeftClickTicks() >= suicideTicks)
                 {
-                    BleedOutNetwork.sendToServer(new SuicideRequestPacket());
-                    BleedOutOverlay.resetLeftClickTicks();
+                    if (!BleedOutOverlay.isSuicideSent())
+                    {
+                        BleedOutOverlay.setSuicideSent(true);
+                        BleedOutNetwork.sendToServer(new SuicideRequestPacket(SuicideRequestPacket.Phase.CONFIRM));
+                    }
                 }
-                else
+                else if (!BleedOutOverlay.isSuicideSent())
                 {
                     BleedOutOverlay.incrementLeftClickTicks();
                 }
             }
             else
             {
+                if (BleedOutOverlay.getLeftClickTicks() > 0 && !BleedOutOverlay.isSuicideSent())
+                {
+                    BleedOutNetwork.sendToServer(new SuicideRequestPacket(SuicideRequestPacket.Phase.CANCEL));
+                }
                 BleedOutOverlay.resetLeftClickTicks();
+                BleedOutOverlay.setSuicideSent(false);
             }
         }
         else
         {
             leftMouseButtonDown = false;
+            requireLmbReleaseForSuicide = false;
             BleedOutOverlay.resetLeftClickTicks();
+            BleedOutOverlay.setSuicideSent(false);
             if (player.getForcedPose() == Pose.SWIMMING)
             {
                 player.setForcedPose(null);
             }
         }
+    }
+
+    @SubscribeEvent
+    public static void onLoggingOut(ClientPlayerNetworkEvent.LoggingOut event)
+    {
+        SyncedSettings.clear();
+        BleedOutOverlay.resetRevive();
+        leftMouseButtonDown = false;
+        requireLmbReleaseForSuicide = false;
+        BleedOutOverlay.resetLeftClickTicks();
+        BleedOutOverlay.setSuicideSent(false);
     }
 
     @SubscribeEvent(priority = EventPriority.HIGHEST)
@@ -675,12 +991,23 @@ public class BleedOutClientHandler
 
         if (player.getPersistentData().getBoolean("bleedout:bleeding"))
         {
+            releaseAttackAndUseInputs(mc, player);
             Set<String> disabledInputs = getDisabledBleedingInputs();
             releaseConfiguredKeyboardInputs(mc, player, disabledInputs);
             if (mc.options.keyJump.isDown())
             {
                 mc.options.keyJump.setDown(false);
             }
+            if (mc.options.keyShift.isDown())
+            {
+                mc.options.keyShift.setDown(false);
+            }
+            player.setShiftKeyDown(false);
         }
+    }
+
+    public static void onRevivePacket(boolean isReviving, int ticksLeft)
+    {
+        BleedOutOverlay.onRevivePacket(isReviving, ticksLeft);
     }
 }

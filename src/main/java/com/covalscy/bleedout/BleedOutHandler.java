@@ -3,6 +3,7 @@ package com.covalscy.bleedout;
 import com.covalscy.bleedout.network.BleedOutNetwork;
 import com.covalscy.bleedout.network.BleedOutUpdatePacket;
 import com.covalscy.bleedout.network.ReviveUpdatePacket;
+import com.covalscy.bleedout.network.SuicideRequestPacket;
 import com.mojang.logging.LogUtils;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.commands.Commands;
@@ -18,12 +19,15 @@ import net.minecraft.world.damagesource.DamageTypes;
 import net.minecraft.world.effect.MobEffect;
 import net.minecraft.world.effect.MobEffectInstance;
 import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.Pose;
+import net.minecraft.world.entity.ai.attributes.AttributeInstance;
+import net.minecraft.world.entity.ai.attributes.AttributeModifier;
+import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.phys.Vec3;
+import net.minecraft.world.entity.projectile.Projectile;
 import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.SubscribeEvent;
-import net.neoforged.fml.ModList;
 import net.neoforged.fml.common.EventBusSubscriber;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
 import net.neoforged.neoforge.event.entity.living.LivingChangeTargetEvent;
@@ -40,6 +44,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 
@@ -51,14 +56,14 @@ public class BleedOutHandler
     private static final Map<UUID, Integer> bleedingPlayers = new HashMap<>();
     private static final Map<UUID, ReviveData> revivingPlayers = new HashMap<>();
     private static final Set<UUID> dyingPlayers = new HashSet<>();
+    private static final Set<UUID> deadPlayers = new HashSet<>();
+    private static final Map<UUID, Long> lastVehicleTick = new HashMap<>();
+    private static final Map<UUID, Entity> lastVehicle = new HashMap<>();
+    private static final long VEHICLE_GRACE_TICKS = 20L;
     private static final Map<UUID, Boolean> poseSetForPlayers = new HashMap<>();
     private static final Map<UUID, UUID> bleedingDowners = new HashMap<>();
     
     private static final Map<UUID, Integer> gracePeriodTicks = new HashMap<>();
-    
-    private record BleedingEffectData(Holder<MobEffect> effect, int amplifier)
-    {
-    }
     
     private static class ReviveData
     {
@@ -72,10 +77,226 @@ public class BleedOutHandler
         }
     }
 
+    /** The vehicle the player is sitting in, or sat in during the last second (e.g. thrown out by an explosion). */
+    private static Entity getVehicleOf(ServerPlayer player)
+    {
+        Entity veh = player.getRootVehicle();
+        if (veh != null && veh != player)
+        {
+            return veh;
+        }
+        Long last = lastVehicleTick.get(player.getUUID());
+        if (last != null && player.level().getGameTime() - last <= VEHICLE_GRACE_TICKS)
+        {
+            return lastVehicle.get(player.getUUID());
+        }
+        return null;
+    }
+
+    private static boolean isVehicleDestroyed(Entity vehicle)
+    {
+        if (vehicle == null) return true;
+        if (vehicle.isRemoved() || !vehicle.isAlive()) return true;
+        if (vehicle instanceof LivingEntity living && living.isDeadOrDying()) return true;
+        try
+        {
+            // SuperbWarfare vehicles expose getHealth() but are not LivingEntity
+            java.lang.reflect.Method m = vehicle.getClass().getMethod("getHealth");
+            Object h = m.invoke(vehicle);
+            if (h instanceof Number n && n.floatValue() <= 0.0F) return true;
+        }
+        catch (Exception ignored) {}
+        return false;
+    }
+
+    /** Players in a vehicle (or who left/were thrown out of it in the last second) and creative players are never knocked down. */
+    private static boolean cannotBeKnocked(ServerPlayer player)
+    {
+        if (player.isCreative() || player.isSpectator()) return true;
+        if (player.isPassenger()) return true;
+        Long last = lastVehicleTick.get(player.getUUID());
+        return last != null && player.level().getGameTime() - last <= VEHICLE_GRACE_TICKS;
+    }
+
     public static boolean isBleeding(Player player)
     {
         if (player == null) return false;
-        return bleedingPlayers.containsKey(player.getUUID()) || player.getPersistentData().getBoolean("bleedout:bleeding");
+        // Server: the in-memory map is the only truth. The persistent-data flag is saved with the player,
+        // so after a crash it could survive without a running bleedout. Clients only have the synced flag.
+        if (player instanceof ServerPlayer) return bleedingPlayers.containsKey(player.getUUID());
+        return player.getPersistentData().getBoolean("bleedout:bleeding");
+    }
+
+    private static final ResourceLocation SPEED_MODIFIER = ResourceLocation.fromNamespaceAndPath(BleedOutMod.MODID, "knocked_speed");
+    private static final ResourceLocation JUMP_MODIFIER = ResourceLocation.fromNamespaceAndPath(BleedOutMod.MODID, "knocked_jump");
+
+    /** Attribute modifiers are synced to the client, so the client's own movement obeys them. */
+    private static void updateMovementModifiers(ServerPlayer player, boolean knocked)
+    {
+        AttributeInstance jump = player.getAttribute(Attributes.JUMP_STRENGTH);
+        if (jump != null)
+        {
+            if (knocked && !jump.hasModifier(JUMP_MODIFIER))
+                jump.addTransientModifier(new AttributeModifier(JUMP_MODIFIER, -1.0, AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL));
+            else if (!knocked && jump.hasModifier(JUMP_MODIFIER))
+                jump.removeModifier(JUMP_MODIFIER);
+        }
+
+        AttributeInstance speed = player.getAttribute(Attributes.MOVEMENT_SPEED);
+        if (speed != null)
+        {
+            boolean freeze = knocked && Config.disableMovementWhileBleeding;
+            if (freeze && !speed.hasModifier(SPEED_MODIFIER))
+                speed.addTransientModifier(new AttributeModifier(SPEED_MODIFIER, -1.0, AttributeModifier.Operation.ADD_MULTIPLIED_TOTAL));
+            else if (!freeze && speed.hasModifier(SPEED_MODIFIER))
+                speed.removeModifier(SPEED_MODIFIER);
+        }
+    }
+
+    private static void clearPersistentFlags(Player player)
+    {
+        player.getPersistentData().remove("bleedout:bleeding");
+        player.getPersistentData().remove("bleedout:ticksLeft");
+        player.getPersistentData().remove("bleedout:reviving");
+        player.getPersistentData().remove("bleedout:reviveTicks");
+    }
+
+    @SubscribeEvent
+    public static void onPlayerLoggedIn(PlayerEvent.PlayerLoggedInEvent event)
+    {
+        if (event.getEntity() instanceof ServerPlayer player)
+        {
+            if (!bleedingPlayers.containsKey(player.getUUID()))
+            {
+                // Leftovers from a crash/restart while knocked
+                clearPersistentFlags(player);
+                updateMovementModifiers(player, false);
+                if (player.getForcedPose() == Pose.SWIMMING)
+                {
+                    player.setForcedPose(null);
+                    player.setPose(Pose.STANDING);
+                    player.refreshDimensions();
+                }
+            }
+            BleedOutNetwork.sendSettings(player);
+        }
+    }
+
+    // ------------------------------------------------------------------ suicide (hold LMB), verified on the server
+
+    private static final Map<UUID, Long> suicideHoldStart = new HashMap<>();
+    private static final Set<UUID> suicideConfirmPending = new HashSet<>();
+
+    public static void onSuicideRequest(ServerPlayer player, SuicideRequestPacket.Phase phase)
+    {
+        UUID id = player.getUUID();
+        if (!Config.enableSuicide || !isBleeding(player))
+        {
+            suicideHoldStart.remove(id);
+            suicideConfirmPending.remove(id);
+            return;
+        }
+        long now = player.level().getGameTime();
+        switch (phase)
+        {
+            case START -> {
+                suicideHoldStart.put(id, now);
+                suicideConfirmPending.remove(id);
+            }
+            case CANCEL -> {
+                suicideHoldStart.remove(id);
+                suicideConfirmPending.remove(id);
+            }
+            case CONFIRM -> {
+                Long start = suicideHoldStart.get(id);
+                if (start != null)
+                {
+                    // Small tolerance for network jitter
+                    if (now - start >= Config.suicideTime * 20L - 10L)
+                    {
+                        suicideHoldStart.remove(id);
+                        suicideConfirmPending.remove(id);
+                        killBleedingPlayer(player);
+                    }
+                    else
+                    {
+                        suicideConfirmPending.add(id);
+                    }
+                }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ configurable bleeding effects
+
+    private record EffectSpec(Holder<MobEffect> effect, int amplifier) {}
+
+    private static List<? extends String> parsedEffectsSource;
+    private static List<EffectSpec> parsedEffects = List.of();
+
+    private static List<EffectSpec> bleedingEffects()
+    {
+        List<? extends String> source = Config.bleedingEffects;
+        if (source == null) return List.of();
+        if (source != parsedEffectsSource)
+        {
+            List<EffectSpec> result = new ArrayList<>();
+            for (String entry : source)
+            {
+                if (entry == null || entry.isBlank()) continue;
+                EffectSpec spec = parseEffect(entry);
+                if (spec != null) result.add(spec);
+                else LOGGER.warn("[BleedOut] Unknown bleeding effect '{}', expected effect_id[:amplifier]", entry);
+            }
+            parsedEffects = result;
+            parsedEffectsSource = source;
+        }
+        return parsedEffects;
+    }
+
+    private static EffectSpec parseEffect(String entry)
+    {
+        String id = entry.trim();
+        int amplifier = 0;
+        int lastColon = id.lastIndexOf(':');
+        if (lastColon > 0)
+        {
+            try
+            {
+                amplifier = Integer.parseInt(id.substring(lastColon + 1).trim());
+                id = id.substring(0, lastColon).trim();
+            }
+            catch (NumberFormatException ignored)
+            {
+                // e.g. "minecraft:slowness" - no amplifier given
+            }
+        }
+        ResourceLocation rl = ResourceLocation.tryParse(id);
+        if (rl == null) return null;
+        Optional<Holder.Reference<MobEffect>> holder = BuiltInRegistries.MOB_EFFECT.getHolder(rl);
+        final int amp = Math.max(0, amplifier);
+        return holder.map(h -> new EffectSpec(h, amp)).orElse(null);
+    }
+
+    private static void applyConfiguredBleedingEffects(ServerPlayer player)
+    {
+        for (EffectSpec spec : bleedingEffects())
+        {
+            player.addEffect(new MobEffectInstance(spec.effect(), 40, spec.amplifier(), false, false));
+        }
+    }
+
+    private static void removeBleedingEffects(ServerPlayer player)
+    {
+        for (EffectSpec spec : bleedingEffects())
+        {
+            MobEffectInstance active = player.getEffect(spec.effect());
+            // Only remove our own short, hidden instance, never a longer effect from a potion
+            if (active != null && active.getDuration() <= 40 && !active.isVisible())
+            {
+                player.removeEffect(spec.effect());
+            }
+        }
     }
 
     @SubscribeEvent(priority = EventPriority.HIGHEST)
@@ -88,6 +309,14 @@ public class BleedOutHandler
 
         UUID playerId = player.getUUID();
         
+        // TACZ applies a bullet as several hurt() calls in a row. If the first one already killed the player,
+        // the next one must not process on the corpse again.
+        if (deadPlayers.contains(playerId))
+        {
+            event.setCanceled(true);
+            return;
+        }
+        
         if (dyingPlayers.contains(playerId) || player.isDeadOrDying() || player.isRemoved())
         {
             return;
@@ -99,16 +328,29 @@ public class BleedOutHandler
             return;
         }
 
-        if (bleedingPlayers.containsKey(playerId))
+        if (!bleedingPlayers.containsKey(playerId))
         {
-            if (gracePeriodTicks.containsKey(playerId) && gracePeriodTicks.get(playerId) > 0)
+            Entity vehicle = getVehicleOf(player);
+            if (vehicle != null && !isVehicleDestroyed(vehicle))
             {
+                // Inside a vehicle a player is neither knocked nor killed - only the vehicle exploding can kill him
                 event.setCanceled(true);
                 return;
             }
-            // After grace period, let damage through so the knocked player can be finished
-            return;
         }
+
+        if (bleedingPlayers.containsKey(playerId))
+        {
+            Integer grace = gracePeriodTicks.get(playerId);
+            if (grace != null && grace > 0)
+            {
+                event.setCanceled(true);
+            }
+        }
+
+        // Lethal damage is NOT decided here: this event carries the raw amount before armor, enchantments,
+        // resistance and absorption, and fires before the Totem of Undying check. Knocking down happens in
+        // onPlayerDeath (LivingDeathEvent), where the damage really was lethal.
     }
 
     @SubscribeEvent
@@ -135,11 +377,17 @@ public class BleedOutHandler
 
         if (event.getEntity() instanceof ServerPlayer player && isBleeding(player))
         {
-            Entity attacker = event.getSource().getEntity();
-            Entity directAttacker = event.getSource().getDirectEntity();
+            DamageSource source = event.getSource();
+            Entity attacker = source.getEntity();
+            Entity directAttacker = source.getDirectEntity();
 
-            boolean isMobAttacker = (attacker != null && !(attacker instanceof Player)) || 
-                                   (directAttacker != null && !(directAttacker instanceof Player));
+            // Bullets/arrows (TACZ, SuperbWarfare...) have a projectile as direct entity, but are fired by a player -
+            // such damage must NOT be treated as mob damage, otherwise knocked players can't be finished with guns.
+            boolean caughtByPlayer = attacker instanceof Player
+                    || directAttacker instanceof Player
+                    || (directAttacker instanceof Projectile projectile && projectile.getOwner() instanceof Player);
+
+            boolean isMobAttacker = !caughtByPlayer && (attacker != null || directAttacker != null);
 
             if (isMobAttacker)
             {
@@ -156,93 +404,29 @@ public class BleedOutHandler
             DamageSource source = event.getSource();
             UUID playerId = player.getUUID();
 
-            if (dyingPlayers.contains(playerId))
-            {
-                // Already in death pipeline, let vanilla death proceed
-                return;
-            }
+            boolean noKnock = cannotBeKnocked(player);
 
             if (player.isPassenger())
             {
                 player.stopRiding();
+            }
 
-                if (bleedingPlayers.containsKey(playerId))
-                {
-                    dyingPlayers.add(playerId);
-                    stopRevive(player, true, true);
-
-                    bleedingPlayers.remove(playerId);
-                    gracePeriodTicks.remove(playerId);
-                    poseSetForPlayers.remove(playerId);
-                    bleedingDowners.remove(playerId);
-                    player.getPersistentData().remove("bleedout:bleeding");
-                    player.setForcedPose(null);
-                    player.setPose(Pose.STANDING);
-                    player.refreshDimensions();
-
-                    BleedOutNetwork.sendToTrackingAndSelf(
-                        new BleedOutUpdatePacket(playerId, false, 0),
-                        player
-                    );
-                }
+            if (deadPlayers.contains(playerId) || dyingPlayers.contains(playerId))
+            {
                 return;
             }
-            
-            if (doesByPass(player, source))
-            {
-                if (player.isPassenger())
-                    player.stopRiding();
-                
-                if (bleedingPlayers.containsKey(playerId))
-                {
-                    dyingPlayers.add(playerId);
-                    stopRevive(player, true, true);
 
-                    bleedingPlayers.remove(playerId);
-                    gracePeriodTicks.remove(playerId);
-                    poseSetForPlayers.remove(playerId);
-                    bleedingDowners.remove(playerId);
-                    player.getPersistentData().remove("bleedout:bleeding");
-                    player.setForcedPose(null);
-                    player.setPose(Pose.STANDING);
-                    player.refreshDimensions();
-
-                    BleedOutNetwork.sendToTrackingAndSelf(
-                        new BleedOutUpdatePacket(playerId, false, 0),
-                        player
-                    );
-                }
-                return;
-            }
-            
-            if (bleedingPlayers.containsKey(playerId))
+            if (noKnock || doesByPass(player, source) || bleedingPlayers.containsKey(playerId))
             {
-                // Knocked player is being finished
                 dyingPlayers.add(playerId);
-                stopRevive(player, true, true);
-                
-                bleedingPlayers.remove(playerId);
-                gracePeriodTicks.remove(playerId);
-                poseSetForPlayers.remove(playerId);
-                bleedingDowners.remove(playerId);
-                player.getPersistentData().remove("bleedout:bleeding");
-                player.setForcedPose(null);
-                player.setPose(Pose.STANDING);
-                player.refreshDimensions();
-
-                BleedOutNetwork.sendToTrackingAndSelf(
-                    new BleedOutUpdatePacket(playerId, false, 0),
-                    player
-                );
-                
-                // Do NOT cancel event! Player actually dies.
+                cleanUpBleedingAndDying(player);
                 return;
             }
-            
+
             // Healthy player taking lethal damage -> ENTER BLEEDOUT
             event.setCanceled(true);
-            player.setHealth(Math.max(1.0f, (float) Config.bleedingHealth));
-            
+            player.setHealth(Math.max(1.0F, Math.min(player.getMaxHealth(), (float) Config.bleedingHealth)));
+
             ServerPlayer attacker = null;
             if (source.getEntity() instanceof ServerPlayer sAttacker)
             {
@@ -252,8 +436,21 @@ public class BleedOutHandler
             {
                 attacker = dAttacker;
             }
-            
+            else if (source.getDirectEntity() instanceof Projectile projectile && projectile.getOwner() instanceof ServerPlayer pAttacker)
+            {
+                attacker = pAttacker;
+            }
+
             startBleedout(player, attacker);
+        }
+    }
+
+    @SubscribeEvent(priority = EventPriority.LOWEST)
+    public static void onPlayerDeathConfirmed(LivingDeathEvent event)
+    {
+        if (event.getEntity() instanceof ServerPlayer player && !player.level().isClientSide)
+        {
+            deadPlayers.add(player.getUUID());
         }
     }
 
@@ -263,6 +460,37 @@ public class BleedOutHandler
         if (event.getEntity() instanceof ServerPlayer player && !event.getEntity().level().isClientSide)
         {
             UUID playerId = player.getUUID();
+            
+            if (player.isPassenger())
+            {
+                lastVehicleTick.put(playerId, player.level().getGameTime());
+                lastVehicle.put(playerId, player.getRootVehicle());
+            }
+            
+            if (player.getHealth() > 0.0F)
+            {
+                deadPlayers.remove(playerId);
+            }
+            else if (!deadPlayers.contains(playerId) && !player.isRemoved() && !player.isCreative() && !player.isSpectator())
+            {
+                // Health is 0 but death was never processed (player would be immortal) - finish it properly.
+                if (isBleeding(player))
+                {
+                    killBleedingPlayer(player);
+                }
+                else if (!dyingPlayers.contains(playerId))
+                {
+                    DamageSource killSource = player.damageSources().genericKill();
+                    cleanUpBleedingAndDying(player);
+                    player.die(killSource);
+                }
+                return;
+            }
+            else if (deadPlayers.contains(playerId))
+            {
+                // Already dead, waiting for respawn - nothing to do (and never call die() again)
+                return;
+            }
             
             if (gracePeriodTicks.containsKey(playerId))
             {
@@ -279,8 +507,23 @@ public class BleedOutHandler
 
             if (bleedingPlayers.containsKey(playerId))
             {
-                int currentTicks = bleedingPlayers.get(playerId);
-                int ticksLeft = Config.enableBleedoutTimer ? (currentTicks - 1) : currentTicks;
+                if (suicideConfirmPending.contains(playerId))
+                {
+                    Long start = suicideHoldStart.get(playerId);
+                    if (start != null && player.level().getGameTime() - start >= Config.suicideTime * 20L - 10L)
+                    {
+                        suicideHoldStart.remove(playerId);
+                        suicideConfirmPending.remove(playerId);
+                        killBleedingPlayer(player);
+                        return;
+                    }
+                }
+
+                int ticksLeft = bleedingPlayers.get(playerId);
+                if (Config.enableBleedoutTimer)
+                {
+                    ticksLeft--;
+                }
                 
                 if (Config.enableBleedoutTimer && ticksLeft <= 0)
                 {
@@ -288,10 +531,7 @@ public class BleedOutHandler
                 }
                 else
                 {
-                    if (Config.enableBleedoutTimer)
-                    {
-                        bleedingPlayers.put(playerId, ticksLeft);
-                    }
+                    bleedingPlayers.put(playerId, ticksLeft);
 
                     if (player.tickCount % 20 == 0)
                     {
@@ -307,33 +547,8 @@ public class BleedOutHandler
                     }
                     
                     player.setJumping(false);
-                    var deltaMovement = player.getDeltaMovement();
-
-                    if (deltaMovement.y > 0)
-                    {
-                        player.setDeltaMovement(deltaMovement.x, 0, deltaMovement.z);
-                        deltaMovement = player.getDeltaMovement();
-                    }
-
-                    if (Config.disableMovementWhileBleeding)
-                    {
-                        player.setDeltaMovement(
-                            0,
-                            Math.min(deltaMovement.y, 0.1),
-                            0
-                        );
-                    }
-                    else
-                    {
-                        double maxSpeed = 0.01;
-                        Vec3 horizMovement = new Vec3(deltaMovement.x, 0, deltaMovement.z);
-
-                        if (horizMovement.length() > maxSpeed)
-                        {
-                            horizMovement = horizMovement.normalize().scale(maxSpeed);
-                            player.setDeltaMovement(horizMovement.x, Math.min(deltaMovement.y, 0.1), horizMovement.z);
-                        }
-                    }
+                    // Movement is client-authoritative: speed/jump are limited through synced attribute modifiers.
+                    updateMovementModifiers(player, true);
 
                     player.getPersistentData().putInt("bleedout:ticksLeft", ticksLeft);
                     
@@ -355,6 +570,7 @@ public class BleedOutHandler
                 ServerPlayer reviver = player.server.getPlayerList().getPlayer(reviveData.reviverId);
                 
                 boolean canContinueRevive = reviver != null && 
+                                           reviver.level() == player.level() &&
                                            !reviver.isDeadOrDying() && 
                                            !isBleeding(reviver) && 
                                            reviver.distanceTo(player) <= (Config.reviveDistance + 1.0);
@@ -367,7 +583,7 @@ public class BleedOutHandler
                     }
                     else
                     {
-                        stopRevive(player, false, false);
+                        stopRevive(player);
                     }
                 }
                 else
@@ -379,12 +595,15 @@ public class BleedOutHandler
                     {
                         reviver.getPersistentData().putBoolean("bleedout:reviving", true);
                         reviver.getPersistentData().putInt("bleedout:reviveTicks", reviveData.ticksLeft);
-                        
-                        if (player.tickCount % 5 == 0)
+                    }
+                    
+                    if (player.tickCount % 5 == 0)
+                    {
+                        if (reviver != null)
                         {
                             BleedOutNetwork.sendReviveUpdateToClient(new ReviveUpdatePacket(true, reviveData.ticksLeft), reviver);
-                            BleedOutNetwork.sendReviveUpdateToClient(new ReviveUpdatePacket(true, reviveData.ticksLeft), player);
                         }
+                        BleedOutNetwork.sendReviveUpdateToClient(new ReviveUpdatePacket(true, reviveData.ticksLeft), player);
                     }
                 }
             }
@@ -394,22 +613,42 @@ public class BleedOutHandler
     @SubscribeEvent
     public static void onPlayerInteract(PlayerInteractEvent.EntityInteract event)
     {
+        if (event.getEntity() instanceof ServerPlayer interactor && isBleeding(interactor))
+        {
+            event.setCanceled(true);
+            return;
+        }
+
         if (event.getTarget() instanceof ServerPlayer targetPlayer && 
             event.getEntity() instanceof ServerPlayer interactor &&
             event.getHand() == InteractionHand.MAIN_HAND)
         {
-            if (isBleeding(targetPlayer) && 
-                !revivingPlayers.containsKey(targetPlayer.getUUID()) &&
-                !targetPlayer.getUUID().equals(interactor.getUUID()) &&
-                interactor.distanceTo(targetPlayer) <= Config.reviveDistance)
+            if (isBleeding(targetPlayer))
             {
-                int reviveTicks = Config.reviveTime * 20;
-                revivingPlayers.put(targetPlayer.getUUID(), new ReviveData(interactor.getUUID(), reviveTicks));
-                
-                BleedOutNetwork.sendReviveUpdateToClient(new ReviveUpdatePacket(true, reviveTicks), interactor);
-                BleedOutNetwork.sendReviveUpdateToClient(new ReviveUpdatePacket(true, reviveTicks), targetPlayer);
-                
                 event.setCanceled(true);
+
+                if (!isBleeding(interactor) &&
+                    !targetPlayer.getUUID().equals(interactor.getUUID()) &&
+                    interactor.distanceTo(targetPlayer) <= Config.reviveDistance)
+                {
+                    if (revivingPlayers.containsKey(targetPlayer.getUUID()))
+                    {
+                        return;
+                    }
+
+                    stopRevivingByReviver(interactor.getUUID(), interactor.server);
+
+                    int reviveTicks = Config.reviveTime * 20;
+                    revivingPlayers.put(targetPlayer.getUUID(), new ReviveData(interactor.getUUID(), reviveTicks));
+                    
+                    targetPlayer.getPersistentData().putBoolean("bleedout:reviving", true);
+                    targetPlayer.getPersistentData().putInt("bleedout:reviveTicks", reviveTicks);
+                    interactor.getPersistentData().putBoolean("bleedout:reviving", true);
+                    interactor.getPersistentData().putInt("bleedout:reviveTicks", reviveTicks);
+
+                    BleedOutNetwork.sendReviveUpdateToClient(new ReviveUpdatePacket(true, reviveTicks), interactor);
+                    BleedOutNetwork.sendReviveUpdateToClient(new ReviveUpdatePacket(true, reviveTicks), targetPlayer);
+                }
             }
         }
     }
@@ -432,27 +671,34 @@ public class BleedOutHandler
         }
     }
 
+    @SubscribeEvent(priority = EventPriority.HIGHEST)
+    public static void onPlayerLeftClickBlock(PlayerInteractEvent.LeftClickBlock event)
+    {
+        if (event.getEntity() instanceof ServerPlayer player && isBleeding(player))
+        {
+            event.setCanceled(true);
+        }
+    }
+
+    @SubscribeEvent(priority = EventPriority.HIGHEST)
+    public static void onPlayerRightClickBlock(PlayerInteractEvent.RightClickBlock event)
+    {
+        if (event.getEntity() instanceof ServerPlayer player && isBleeding(player))
+        {
+            event.setCanceled(true);
+        }
+    }
+
     @SubscribeEvent
     public static void onPlayerRespawn(PlayerEvent.PlayerRespawnEvent event)
     {
         if (event.getEntity() instanceof ServerPlayer player && !player.level().isClientSide)
         {
             UUID playerId = player.getUUID();
-            dyingPlayers.remove(playerId);
-            bleedingPlayers.remove(playerId);
-            gracePeriodTicks.remove(playerId);
-            revivingPlayers.remove(playerId);
-            poseSetForPlayers.remove(playerId);
-            bleedingDowners.remove(playerId);
-            
-            player.getPersistentData().remove("bleedout:bleeding");
-            player.getPersistentData().remove("bleedout:ticksLeft");
-            player.getPersistentData().remove("bleedout:reviving");
-            player.getPersistentData().remove("bleedout:reviveTicks");
-            
-            player.setForcedPose(null);
-            player.setPose(Pose.STANDING);
-            player.refreshDimensions();
+            deadPlayers.remove(playerId);
+            lastVehicleTick.remove(playerId);
+            lastVehicle.remove(playerId);
+            cleanUpBleedingAndDying(player);
         }
     }
 
@@ -468,89 +714,20 @@ public class BleedOutHandler
                 killBleedingPlayer(player);
             }
             
-            if (revivingPlayers.containsKey(playerId))
+            stopRevive(player);
+            if (player.server != null)
             {
-                stopRevive(player, false, false);
+                stopRevivingByReviver(playerId, player.server);
             }
             
             dyingPlayers.remove(playerId);
             gracePeriodTicks.remove(playerId);
+            deadPlayers.remove(playerId);
+            lastVehicleTick.remove(playerId);
+            lastVehicle.remove(playerId);
+            suicideHoldStart.remove(playerId);
+            suicideConfirmPending.remove(playerId);
         }
-    }
-
-    private static void applyConfiguredBleedingEffects(ServerPlayer player)
-    {
-        List<? extends String> configuredEffects = Config.bleedingEffects;
-        if (configuredEffects == null || configuredEffects.isEmpty())
-            return;
-
-        List<BleedingEffectData> effectDataList = parseBleedingEffects(configuredEffects);
-        for (BleedingEffectData data : effectDataList)
-        {
-            player.addEffect(new MobEffectInstance(
-                data.effect,
-                40,
-                data.amplifier,
-                false,
-                false
-            ));
-        }
-    }
-
-    private static List<BleedingEffectData> parseBleedingEffects(List<? extends String> configuredEffects)
-    {
-        List<BleedingEffectData> list = new ArrayList<>();
-        for (String rawValue : configuredEffects)
-        {
-            if (rawValue == null || rawValue.isBlank())
-                continue;
-
-            String trimmed = rawValue.trim();
-            String idPart = trimmed;
-            int amplifier = 0;
-
-            if (trimmed.contains(":"))
-            {
-                String[] parts = trimmed.split(":");
-                if (parts.length >= 3)
-                {
-                    idPart = parts[0].trim() + ":" + parts[1].trim();
-                    try
-                    {
-                        amplifier = Math.max(0, Integer.parseInt(parts[2].trim()));
-                    }
-                    catch (NumberFormatException ignored) {}
-                }
-                else if (parts.length == 2)
-                {
-                    if (parts[0].contains(":") || parts[0].equals("minecraft") || ResourceLocation.tryParse(trimmed) != null)
-                    {
-                        idPart = trimmed;
-                        amplifier = 0;
-                    }
-                    else
-                    {
-                        idPart = parts[0].trim();
-                        try
-                        {
-                            amplifier = Math.max(0, Integer.parseInt(parts[1].trim()));
-                        }
-                        catch (NumberFormatException ignored) {}
-                    }
-                }
-            }
-
-            ResourceLocation effectId = ResourceLocation.tryParse(idPart);
-            if (effectId == null)
-                continue;
-
-            var holderOpt = BuiltInRegistries.MOB_EFFECT.getHolder(effectId);
-            if (holderOpt.isPresent())
-            {
-                list.add(new BleedingEffectData(holderOpt.get(), amplifier));
-            }
-        }
-        return list;
     }
 
     private static void startBleedout(ServerPlayer player, ServerPlayer attacker)
@@ -579,6 +756,7 @@ public class BleedOutHandler
         {
             gracePeriodTicks.remove(playerId);
         }
+        updateMovementModifiers(player, true);
 
         if (attacker != null)
         {
@@ -587,6 +765,12 @@ public class BleedOutHandler
         else
         {
             bleedingDowners.remove(playerId);
+        }
+
+        stopRevive(player);
+        if (player.server != null)
+        {
+            stopRevivingByReviver(playerId, player.server);
         }
         
         BleedOutNetwork.sendToTrackingAndSelf(
@@ -597,33 +781,80 @@ public class BleedOutHandler
         applyConfiguredBleedingEffects(player);
     }
 
+    public static void cleanUpBleedingAndDying(ServerPlayer player)
+    {
+        UUID playerId = player.getUUID();
+        stopRevive(player);
+        if (player.server != null)
+        {
+            stopRevivingByReviver(playerId, player.server);
+        }
+
+        bleedingPlayers.remove(playerId);
+        dyingPlayers.remove(playerId);
+        poseSetForPlayers.remove(playerId);
+        bleedingDowners.remove(playerId);
+        gracePeriodTicks.remove(playerId);
+        suicideHoldStart.remove(playerId);
+        suicideConfirmPending.remove(playerId);
+        clearPersistentFlags(player);
+        updateMovementModifiers(player, false);
+        player.setForcedPose(null);
+        player.setPose(Pose.STANDING);
+        player.refreshDimensions();
+
+        BleedOutNetwork.sendToTrackingAndSelf(
+            new BleedOutUpdatePacket(playerId, false, 0),
+            player
+        );
+    }
+
     public static void killBleedingPlayer(ServerPlayer player)
     {
         if (player == null) return;
         UUID playerId = player.getUUID();
         
-        dyingPlayers.add(playerId);
+        if (dyingPlayers.contains(playerId) && !bleedingPlayers.containsKey(playerId))
+        {
+            return;
+        }
         
-        stopRevive(player, true, true);
+        dyingPlayers.add(playerId);
+        stopRevive(player);
+        if (player.server != null)
+        {
+            stopRevivingByReviver(playerId, player.server);
+        }
+        
+        UUID downerId = bleedingDowners.remove(playerId);
         
         bleedingPlayers.remove(playerId);
         gracePeriodTicks.remove(playerId);
         poseSetForPlayers.remove(playerId);
+        suicideHoldStart.remove(playerId);
+        suicideConfirmPending.remove(playerId);
         player.getPersistentData().remove("bleedout:bleeding");
         player.getPersistentData().remove("bleedout:ticksLeft");
+        updateMovementModifiers(player, false);
+        player.setForcedPose(null);
+        player.setPose(Pose.STANDING);
+        player.refreshDimensions();
         
         BleedOutNetwork.sendToTrackingAndSelf(
             new BleedOutUpdatePacket(playerId, false, 0),
             player
         );
         
-        UUID downerId = bleedingDowners.remove(playerId);
+        // If player already has <= 0 health, hurt() will be rejected by isDeadOrDying().
+        // Reset health to 1.0f first so hurt() can proceed through damage logic and call die()
+        if (player.getHealth() <= 0.0F)
+        {
+            player.setHealth(1.0F);
+        }
         
-        player.setForcedPose(null);
-        player.setPose(Pose.STANDING);
-        player.refreshDimensions();
+        DamageSource killSource = player.damageSources().genericKill();
+        boolean hurtSuccess = false;
         
-        boolean killedByDowner = false;
         if (downerId != null && player.server != null)
         {
             ServerPlayer downer = player.server.getPlayerList().getPlayer(downerId);
@@ -631,25 +862,37 @@ public class BleedOutHandler
             {
                 try
                 {
-                    player.hurt(player.damageSources().playerAttack(downer), Float.MAX_VALUE);
-                    killedByDowner = player.isDeadOrDying();
+                    DamageSource downerSource = player.damageSources().playerAttack(downer);
+                    hurtSuccess = player.hurt(downerSource, Float.MAX_VALUE) && player.isDeadOrDying();
+                    if (hurtSuccess)
+                    {
+                        killSource = downerSource;
+                    }
                 }
                 catch (Exception ignored) {}
             }
         }
         
-        if (!killedByDowner && !player.isDeadOrDying())
+        if (!hurtSuccess && (!player.isDeadOrDying() || player.isAlive()))
         {
-            player.hurt(player.damageSources().genericKill(), Float.MAX_VALUE);
+            if (player.getHealth() <= 0.0F)
+            {
+                player.setHealth(1.0F);
+            }
+            hurtSuccess = player.hurt(killSource, Float.MAX_VALUE);
         }
         
-        if (!player.isDeadOrDying())
+        // Failsafe: if hurt() was canceled, failed, or player is somehow not dead, directly trigger die()
+        if (!hurtSuccess || !player.isDeadOrDying() || player.isAlive())
         {
-            player.kill();
+            player.setHealth(0.0F);
+            player.die(killSource);
         }
+        
+        cleanUpBleedingAndDying(player);
     }
 
-    private static void stopRevive(ServerPlayer player, boolean notifyReviver, boolean notifyTarget)
+    public static void stopRevive(ServerPlayer player)
     {
         if (player == null) return;
         UUID playerId = player.getUUID();
@@ -659,21 +902,36 @@ public class BleedOutHandler
             
             player.getPersistentData().remove("bleedout:reviving");
             player.getPersistentData().remove("bleedout:reviveTicks");
+            BleedOutNetwork.sendReviveUpdateToClient(new ReviveUpdatePacket(false, 0), player);
             
-            if (notifyTarget)
+            if (player.server != null)
             {
-                BleedOutNetwork.sendReviveUpdateToClient(new ReviveUpdatePacket(false, 0), player);
-            }
-            
-            ServerPlayer reviver = player.server.getPlayerList().getPlayer(reviveData.reviverId);
-            if (reviver != null)
-            {
-                reviver.getPersistentData().remove("bleedout:reviving");
-                reviver.getPersistentData().remove("bleedout:reviveTicks");
-                
-                if (notifyReviver)
+                ServerPlayer reviver = player.server.getPlayerList().getPlayer(reviveData.reviverId);
+                if (reviver != null)
                 {
+                    reviver.getPersistentData().remove("bleedout:reviving");
+                    reviver.getPersistentData().remove("bleedout:reviveTicks");
                     BleedOutNetwork.sendReviveUpdateToClient(new ReviveUpdatePacket(false, 0), reviver);
+                }
+            }
+        }
+    }
+
+    public static void stopRevivingByReviver(UUID reviverId, net.minecraft.server.MinecraftServer server)
+    {
+        if (reviverId == null || server == null) return;
+        for (Map.Entry<UUID, ReviveData> entry : new HashMap<>(revivingPlayers).entrySet())
+        {
+            if (entry.getValue().reviverId.equals(reviverId))
+            {
+                ServerPlayer target = server.getPlayerList().getPlayer(entry.getKey());
+                if (target != null)
+                {
+                    stopRevive(target);
+                }
+                else
+                {
+                    revivingPlayers.remove(entry.getKey());
                 }
             }
         }
@@ -699,13 +957,15 @@ public class BleedOutHandler
     private static void revivePlayer(ServerPlayer player)
     {
         UUID playerId = player.getUUID();
-        stopRevive(player, false, true);
+        stopRevive(player);
         
         bleedingPlayers.remove(playerId);
         gracePeriodTicks.remove(playerId);
         poseSetForPlayers.remove(playerId);
         bleedingDowners.remove(playerId);
         dyingPlayers.remove(playerId);
+        suicideHoldStart.remove(playerId);
+        suicideConfirmPending.remove(playerId);
         player.getPersistentData().remove("bleedout:bleeding");
         player.getPersistentData().remove("bleedout:ticksLeft");
         
@@ -714,6 +974,8 @@ public class BleedOutHandler
             player
         );
         
+        removeBleedingEffects(player);
+        updateMovementModifiers(player, false);
         player.setHealth(player.getMaxHealth() * 0.5f);
         player.setForcedPose(null);
         player.setPose(Pose.STANDING);
