@@ -1,0 +1,17 @@
+{
+  "required": false,
+  "minVersion": "0.8",
+  "package": "com.covalscy.bleedout.mixin.ragdoll",
+  "plugin": "com.covalscy.bleedout.compat.BleedOutMixinPlugin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "RagdollControlHelperMixin"
+  ],
+  "client": [
+    "RagdollControlsHintMixin",
+    "RagdollCameraLockMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 0
+  }
+}

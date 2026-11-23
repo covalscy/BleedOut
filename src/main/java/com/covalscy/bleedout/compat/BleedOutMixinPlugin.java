@@ -8,12 +8,15 @@ import org.spongepowered.asm.mixin.extensibility.IMixinInfo;
 import java.util.List;
 import java.util.Set;
 
-/** Skips the TaCZ mixins when TaCZ isn't installed. */
+/** Skips optional mod compat mixins when their target mods aren't installed. */
 public class BleedOutMixinPlugin implements IMixinConfigPlugin {
     @Override
     public boolean shouldApplyMixin(String targetClassName, String mixinClassName) {
         if (mixinClassName.startsWith("com.covalscy.bleedout.mixin.tacz.")) {
             return LoadingModList.get().getModFileById("tacz") != null;
+        }
+        if (mixinClassName.startsWith("com.covalscy.bleedout.mixin.ragdoll.")) {
+            return LoadingModList.get().getModFileById("bleedout_ragdolls") != null;
         }
         return true;
     }

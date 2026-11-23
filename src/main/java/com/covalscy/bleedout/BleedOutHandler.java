@@ -1,5 +1,8 @@
 package com.covalscy.bleedout;
 
+import com.covalscy.bleedout.api.BleedOutTags;
+import com.covalscy.bleedout.compat.ragdoll.SableRagdollCompat;
+import com.covalscy.bleedout.hitbox.KnockedBodyBox;
 import com.covalscy.bleedout.network.BleedOutNetwork;
 import com.covalscy.bleedout.network.BleedOutUpdatePacket;
 import com.covalscy.bleedout.network.ReviveUpdatePacket;
@@ -12,8 +15,11 @@ import net.minecraft.core.Holder;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.util.Mth;
 import net.minecraft.world.InteractionHand;
+import net.minecraft.world.InteractionResult;
 import net.minecraft.world.damagesource.DamageSource;
 import net.minecraft.world.damagesource.DamageTypes;
 import net.minecraft.world.effect.MobEffect;
@@ -26,6 +32,8 @@ import net.minecraft.world.entity.ai.attributes.AttributeModifier;
 import net.minecraft.world.entity.ai.attributes.Attributes;
 import net.minecraft.world.entity.player.Player;
 import net.minecraft.world.entity.projectile.Projectile;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
 import net.neoforged.bus.api.EventPriority;
 import net.neoforged.bus.api.SubscribeEvent;
 import net.neoforged.fml.common.EventBusSubscriber;
@@ -37,6 +45,7 @@ import net.neoforged.neoforge.event.entity.player.AttackEntityEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerEvent;
 import net.neoforged.neoforge.event.entity.player.PlayerInteractEvent;
 import net.neoforged.neoforge.event.tick.PlayerTickEvent;
+import org.jetbrains.annotations.Nullable;
 import org.slf4j.Logger;
 
 import java.util.ArrayList;
@@ -77,11 +86,17 @@ public class BleedOutHandler
         }
     }
 
+    /** True if the player rides a real vehicle (the sable_player_ragdoll seat does not count). */
+    private static boolean isInRealVehicle(ServerPlayer player)
+    {
+        return player.isPassenger() && !SableRagdollCompat.isRidingRagdollSeat(player);
+    }
+
     /** The vehicle the player is sitting in, or sat in during the last second (e.g. thrown out by an explosion). */
     private static Entity getVehicleOf(ServerPlayer player)
     {
         Entity veh = player.getRootVehicle();
-        if (veh != null && veh != player)
+        if (veh != null && veh != player && !SableRagdollCompat.isRidingRagdollSeat(player))
         {
             return veh;
         }
@@ -113,7 +128,7 @@ public class BleedOutHandler
     private static boolean cannotBeKnocked(ServerPlayer player)
     {
         if (player.isCreative() || player.isSpectator()) return true;
-        if (player.isPassenger()) return true;
+        if (isInRealVehicle(player)) return true;
         Long last = lastVehicleTick.get(player.getUUID());
         return last != null && player.level().getGameTime() - last <= VEHICLE_GRACE_TICKS;
     }
@@ -125,6 +140,41 @@ public class BleedOutHandler
         // so after a crash it could survive without a running bleedout. Clients only have the synced flag.
         if (player instanceof ServerPlayer) return bleedingPlayers.containsKey(player.getUUID());
         return player.getPersistentData().getBoolean("bleedout:bleeding");
+    }
+
+    public static int getBleedoutTicksLeft(Player player)
+    {
+        if (player == null) return 0;
+        if (player instanceof ServerPlayer)
+        {
+            return bleedingPlayers.getOrDefault(player.getUUID(), 0);
+        }
+        return player.getPersistentData().getInt("bleedout:ticksLeft");
+    }
+
+    public static boolean isBeingRevived(Player player)
+    {
+        if (player == null) return false;
+        if (player instanceof ServerPlayer)
+        {
+            return revivingPlayers.containsKey(player.getUUID());
+        }
+        return player.getPersistentData().getBoolean("bleedout:reviving");
+    }
+
+    public static boolean hasUsableWhileBleedingItem(Player player)
+    {
+        if (player == null) return false;
+        return player.getMainHandItem().is(BleedOutTags.Items.USABLE_WHILE_BLEEDING)
+                || player.getOffhandItem().is(BleedOutTags.Items.USABLE_WHILE_BLEEDING);
+    }
+
+    public static boolean isHoldingCustomReviveTool(Player player)
+    {
+        if (player == null) return false;
+        if (player.getMainHandItem().is(BleedOutTags.Items.CUSTOM_REVIVE_TOOL)) return true;
+        return player.getMainHandItem().isEmpty()
+                && player.getOffhandItem().is(BleedOutTags.Items.CUSTOM_REVIVE_TOOL);
     }
 
     private static final ResourceLocation SPEED_MODIFIER = ResourceLocation.fromNamespaceAndPath(BleedOutMod.MODID, "knocked_speed");
@@ -345,6 +395,14 @@ public class BleedOutHandler
             if (grace != null && grace > 0)
             {
                 event.setCanceled(true);
+                return;
+            }
+
+            // Ragdoll impacts (being dragged, falling) must not finish off a knocked player
+            if (source.is(DamageTypes.FLY_INTO_WALL) && SableRagdollCompat.isRidingRagdollSeat(player))
+            {
+                event.setCanceled(true);
+                return;
             }
         }
 
@@ -406,7 +464,7 @@ public class BleedOutHandler
 
             boolean noKnock = cannotBeKnocked(player);
 
-            if (player.isPassenger())
+            if (isInRealVehicle(player))
             {
                 player.stopRiding();
             }
@@ -461,7 +519,7 @@ public class BleedOutHandler
         {
             UUID playerId = player.getUUID();
             
-            if (player.isPassenger())
+            if (isInRealVehicle(player))
             {
                 lastVehicleTick.put(playerId, player.level().getGameTime());
                 lastVehicle.put(playerId, player.getRootVehicle());
@@ -538,12 +596,20 @@ public class BleedOutHandler
                         applyConfiguredBleedingEffects(player);
                     }
                     
-                    if (player.getPose() != Pose.SWIMMING || player.getForcedPose() != Pose.SWIMMING)
+                    boolean ragdolled = SableRagdollCompat.isRidingRagdollSeat(player);
+                    if (!ragdolled && (player.getPose() != Pose.SWIMMING || player.getForcedPose() != Pose.SWIMMING))
                     {
                         player.setForcedPose(Pose.SWIMMING);
                         player.setPose(Pose.SWIMMING);
                         player.refreshDimensions();
                         poseSetForPlayers.put(playerId, true);
+                    }
+
+                    // Re-enter the limp ragdoll if it ended while still knocked (e.g. chunk unload) or the launch failed
+                    if (!ragdolled && player.tickCount % 20 == 0 && SableRagdollCompat.isEnabled()
+                            && !isInRealVehicle(player) && !SableRagdollCompat.isKnockRagdollPendingOrActive(player))
+                    {
+                        SableRagdollCompat.enterKnockRagdoll(player, Vec3.ZERO);
                     }
                     
                     player.setJumping(false);
@@ -573,7 +639,7 @@ public class BleedOutHandler
                                            reviver.level() == player.level() &&
                                            !reviver.isDeadOrDying() && 
                                            !isBleeding(reviver) && 
-                                           reviver.distanceTo(player) <= (Config.reviveDistance + 1.0);
+                                           SableRagdollCompat.distance(reviver, player) <= (Config.reviveDistance + 1.0);
                 
                 if (!canContinueRevive || reviveData.ticksLeft <= 0)
                 {
@@ -613,44 +679,75 @@ public class BleedOutHandler
     @SubscribeEvent
     public static void onPlayerInteract(PlayerInteractEvent.EntityInteract event)
     {
-        if (event.getEntity() instanceof ServerPlayer interactor && isBleeding(interactor))
+        if (isBleeding(event.getEntity()))
         {
             event.setCanceled(true);
+            event.setCancellationResult(hasUsableWhileBleedingItem(event.getEntity())
+                    ? InteractionResult.PASS
+                    : InteractionResult.FAIL);
             return;
         }
 
-        if (event.getTarget() instanceof ServerPlayer targetPlayer && 
+        if (event.getTarget() instanceof ServerPlayer targetPlayer &&
             event.getEntity() instanceof ServerPlayer interactor &&
             event.getHand() == InteractionHand.MAIN_HAND)
         {
-            if (isBleeding(targetPlayer))
+            if (interactor.getItemInHand(event.getHand()).is(BleedOutTags.Items.CUSTOM_REVIVE_TOOL))
+            {
+                return;
+            }
+            if (tryStartRevive(interactor, targetPlayer))
             {
                 event.setCanceled(true);
-
-                if (!isBleeding(interactor) &&
-                    !targetPlayer.getUUID().equals(interactor.getUUID()) &&
-                    interactor.distanceTo(targetPlayer) <= Config.reviveDistance)
-                {
-                    if (revivingPlayers.containsKey(targetPlayer.getUUID()))
-                    {
-                        return;
-                    }
-
-                    stopRevivingByReviver(interactor.getUUID(), interactor.server);
-
-                    int reviveTicks = Config.reviveTime * 20;
-                    revivingPlayers.put(targetPlayer.getUUID(), new ReviveData(interactor.getUUID(), reviveTicks));
-                    
-                    targetPlayer.getPersistentData().putBoolean("bleedout:reviving", true);
-                    targetPlayer.getPersistentData().putInt("bleedout:reviveTicks", reviveTicks);
-                    interactor.getPersistentData().putBoolean("bleedout:reviving", true);
-                    interactor.getPersistentData().putInt("bleedout:reviveTicks", reviveTicks);
-
-                    BleedOutNetwork.sendReviveUpdateToClient(new ReviveUpdatePacket(true, reviveTicks), interactor);
-                    BleedOutNetwork.sendReviveUpdateToClient(new ReviveUpdatePacket(true, reviveTicks), targetPlayer);
-                }
             }
         }
+    }
+
+    @SubscribeEvent(priority = EventPriority.HIGHEST)
+    public static void onPlayerInteractSpecific(PlayerInteractEvent.EntityInteractSpecific event)
+    {
+        if (isBleeding(event.getEntity()))
+        {
+            event.setCanceled(true);
+            event.setCancellationResult(hasUsableWhileBleedingItem(event.getEntity())
+                    ? InteractionResult.PASS
+                    : InteractionResult.FAIL);
+        }
+    }
+
+    /**
+     * Starts reviving {@code target} by {@code interactor} if possible.
+     * Returns true if the target is knocked (the interaction was handled), even if a revive was already running.
+     * Also used by the sable_player_ragdoll compat when right-clicking a knocked ragdoll.
+     */
+    public static boolean tryStartRevive(ServerPlayer interactor, ServerPlayer targetPlayer)
+    {
+        if (!isBleeding(targetPlayer)) return false;
+
+        if (!isBleeding(interactor) &&
+            !targetPlayer.getUUID().equals(interactor.getUUID()) &&
+            interactor.level() == targetPlayer.level() &&
+            SableRagdollCompat.distance(interactor, targetPlayer) <= Config.reviveDistance)
+        {
+            if (revivingPlayers.containsKey(targetPlayer.getUUID()))
+            {
+                return true;
+            }
+
+            stopRevivingByReviver(interactor.getUUID(), interactor.server);
+
+            int reviveTicks = Config.reviveTime * 20;
+            revivingPlayers.put(targetPlayer.getUUID(), new ReviveData(interactor.getUUID(), reviveTicks));
+            
+            targetPlayer.getPersistentData().putBoolean("bleedout:reviving", true);
+            targetPlayer.getPersistentData().putInt("bleedout:reviveTicks", reviveTicks);
+            interactor.getPersistentData().putBoolean("bleedout:reviving", true);
+            interactor.getPersistentData().putInt("bleedout:reviveTicks", reviveTicks);
+
+            BleedOutNetwork.sendReviveUpdateToClient(new ReviveUpdatePacket(true, reviveTicks), interactor);
+            BleedOutNetwork.sendReviveUpdateToClient(new ReviveUpdatePacket(true, reviveTicks), targetPlayer);
+        }
+        return true;
     }
 
     @SubscribeEvent(priority = EventPriority.HIGHEST)
@@ -665,9 +762,34 @@ public class BleedOutHandler
     @SubscribeEvent(priority = EventPriority.HIGHEST)
     public static void onPlayerInteractItem(PlayerInteractEvent.RightClickItem event)
     {
-        if (event.getEntity() instanceof ServerPlayer player && isBleeding(player))
+        Player player = event.getEntity();
+        if (isBleeding(player))
         {
+            if (event.getItemStack().is(BleedOutTags.Items.USABLE_WHILE_BLEEDING))
+            {
+                return;
+            }
             event.setCanceled(true);
+            if (event.getHand() == InteractionHand.MAIN_HAND
+                    && player.getOffhandItem().is(BleedOutTags.Items.USABLE_WHILE_BLEEDING))
+            {
+                event.setCancellationResult(InteractionResult.PASS);
+            }
+            else
+            {
+                event.setCancellationResult(InteractionResult.FAIL);
+            }
+        }
+    }
+
+    @SubscribeEvent(priority = EventPriority.LOWEST, receiveCanceled = true)
+    public static void onPlayerInteractItemLowest(PlayerInteractEvent.RightClickItem event)
+    {
+        if (event.isCanceled()
+                && isBleeding(event.getEntity())
+                && event.getItemStack().is(BleedOutTags.Items.USABLE_WHILE_BLEEDING))
+        {
+            event.setCanceled(false);
         }
     }
 
@@ -683,9 +805,26 @@ public class BleedOutHandler
     @SubscribeEvent(priority = EventPriority.HIGHEST)
     public static void onPlayerRightClickBlock(PlayerInteractEvent.RightClickBlock event)
     {
-        if (event.getEntity() instanceof ServerPlayer player && isBleeding(player))
+        Player player = event.getEntity();
+        if (isBleeding(player))
         {
             event.setCanceled(true);
+            event.setCancellationResult(hasUsableWhileBleedingItem(player)
+                    ? InteractionResult.PASS
+                    : InteractionResult.FAIL);
+        }
+    }
+
+    @SubscribeEvent(priority = EventPriority.LOWEST, receiveCanceled = true)
+    public static void onPlayerRightClickBlockLowest(PlayerInteractEvent.RightClickBlock event)
+    {
+        if (event.isCanceled()
+                && event.getEntity() instanceof ServerPlayer player
+                && !isBleeding(player)
+                && player.getItemInHand(event.getHand()).is(BleedOutTags.Items.CUSTOM_REVIVE_TOOL)
+                && SableRagdollCompat.isRagdollClick(player.serverLevel(), event.getPos(), event.getFace()))
+        {
+            event.setCancellationResult(InteractionResult.PASS);
         }
     }
 
@@ -779,6 +918,12 @@ public class BleedOutHandler
         );
         
         applyConfiguredBleedingEffects(player);
+
+        // Limp physics ragdoll (sable_player_ragdoll), keeping the player's momentum so he falls naturally
+        if (SableRagdollCompat.isEnabled() && !isInRealVehicle(player))
+        {
+            SableRagdollCompat.enterKnockRagdoll(player, player.getDeltaMovement());
+        }
     }
 
     public static void cleanUpBleedingAndDying(ServerPlayer player)
@@ -799,6 +944,7 @@ public class BleedOutHandler
         suicideConfirmPending.remove(playerId);
         clearPersistentFlags(player);
         updateMovementModifiers(player, false);
+        SableRagdollCompat.exitKnockRagdoll(player);
         player.setForcedPose(null);
         player.setPose(Pose.STANDING);
         player.refreshDimensions();
@@ -954,7 +1100,92 @@ public class BleedOutHandler
         return false;
     }
 
+    public static boolean revivePlayerWithHealth(ServerPlayer player, float healthFraction)
+    {
+        if (player == null || !isBleeding(player))
+        {
+            return false;
+        }
+        revivePlayer(player, healthFraction);
+        return true;
+    }
+
+    public static @Nullable ServerPlayer findTargetedBleedingPlayer(ServerPlayer reviver, double maxDistance)
+    {
+        if (reviver == null || !(reviver.level() instanceof ServerLevel level) || maxDistance <= 0.0D)
+        {
+            return null;
+        }
+        Vec3 eye = reviver.getEyePosition();
+        Vec3 look = reviver.getLookAngle().normalize();
+        Vec3 end = eye.add(look.scale(maxDistance));
+
+        ServerPlayer bestTarget = null;
+        double bestDistSqr = maxDistance * maxDistance;
+
+        if (SableRagdollCompat.isAvailable())
+        {
+            SableRagdollCompat.RagdollRayHit ragdollHit = SableRagdollCompat.findClosestRagdollHit(level, reviver, eye, end, bestDistSqr);
+            if (ragdollHit != null && isBleeding(ragdollHit.player())
+                    && SableRagdollCompat.distance(reviver, ragdollHit.player()) <= maxDistance)
+            {
+                bestTarget = ragdollHit.player();
+                bestDistSqr = eye.distanceToSqr(ragdollHit.hitPos());
+            }
+        }
+
+        for (ServerPlayer candidate : level.players())
+        {
+            if (candidate == reviver || !isBleeding(candidate) || !candidate.isAlive() || candidate.isSpectator())
+            {
+                continue;
+            }
+            if (SableRagdollCompat.distance(reviver, candidate) > maxDistance + 0.5D)
+            {
+                continue;
+            }
+
+            if (SableRagdollCompat.isRagdolled(candidate))
+            {
+                Vec3 bodyPos = SableRagdollCompat.worldPositionOf(candidate);
+                Vec3 toBody = bodyPos.subtract(eye);
+                double proj = toBody.dot(look);
+                if (proj >= 0.0D && proj <= maxDistance)
+                {
+                    double perpSqr = toBody.lengthSqr() - proj * proj;
+                    double hitDistSqr = proj * proj;
+                    if (perpSqr <= 0.75D * 0.75D && hitDistSqr < bestDistSqr)
+                    {
+                        bestDistSqr = hitDistSqr;
+                        bestTarget = candidate;
+                    }
+                }
+                continue;
+            }
+
+            AABB box = KnockedBodyBox.usesProneHitbox(candidate)
+                    ? KnockedBodyBox.of(candidate, candidate.getBoundingBox()).inflate(0.35D)
+                    : candidate.getBoundingBox().inflate(0.35D);
+            Optional<Vec3> hit = box.contains(eye) ? Optional.of(eye) : box.clip(eye, end);
+            if (hit.isPresent())
+            {
+                double distSqr = eye.distanceToSqr(hit.get());
+                if (distSqr < bestDistSqr)
+                {
+                    bestDistSqr = distSqr;
+                    bestTarget = candidate;
+                }
+            }
+        }
+        return bestTarget;
+    }
+
     private static void revivePlayer(ServerPlayer player)
+    {
+        revivePlayer(player, 0.5f);
+    }
+
+    private static void revivePlayer(ServerPlayer player, float healthFraction)
     {
         UUID playerId = player.getUUID();
         stopRevive(player);
@@ -976,20 +1207,29 @@ public class BleedOutHandler
         
         removeBleedingEffects(player);
         updateMovementModifiers(player, false);
-        player.setHealth(player.getMaxHealth() * 0.5f);
+        SableRagdollCompat.exitKnockRagdoll(player);
+        float clampedFraction = Mth.clamp(healthFraction, 0.05F, 1.0F);
+        float targetHealth = Math.max(1.0F, Math.min(player.getMaxHealth(), player.getMaxHealth() * clampedFraction));
+        player.setHealth(targetHealth);
         player.setForcedPose(null);
         player.setPose(Pose.STANDING);
         player.refreshDimensions();
     }
 
+    public static int getReviveTicksLeft(Player player)
+    {
+        if (player == null) return 0;
+        if (player instanceof ServerPlayer)
+        {
+            ReviveData data = revivingPlayers.get(player.getUUID());
+            return data != null ? data.ticksLeft : 0;
+        }
+        return player.getPersistentData().getInt("bleedout:reviveTicks");
+    }
+
     public static int getReviveTimeLeft(Player player)
     {
-        UUID playerId = player.getUUID();
-        if (revivingPlayers.containsKey(playerId))
-        {
-            return revivingPlayers.get(playerId).ticksLeft / 20;
-        }
-        return 0;
+        return getReviveTicksLeft(player) / 20;
     }
 
     @SubscribeEvent

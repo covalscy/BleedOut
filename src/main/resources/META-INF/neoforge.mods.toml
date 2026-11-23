@@ -6,6 +6,7 @@ license="${mod_license}"
 modId="${mod_id}"
 version="${mod_version}"
 displayName="${mod_name}"
+logoFile="bleedout_icon.png"
 authors="${mod_authors}"
 description='''${mod_description}'''
 
@@ -14,6 +15,9 @@ config="bleedout.mixins.json"
 
 [[mixins]]
 config="bleedout.tacz.mixins.json"
+
+[[mixins]]
+config="bleedout.ragdoll.mixins.json"
 
 [[dependencies."${mod_id}"]]
     modId="neoforge"
@@ -27,4 +31,11 @@ config="bleedout.tacz.mixins.json"
     type="required"
     versionRange="${minecraft_version_range}"
     ordering="NONE"
+    side="BOTH"
+
+[[dependencies."${mod_id}"]]
+    modId="bleedout_ragdolls"
+    type="optional"
+    versionRange="[0.8.0,)"
+    ordering="AFTER"
     side="BOTH"

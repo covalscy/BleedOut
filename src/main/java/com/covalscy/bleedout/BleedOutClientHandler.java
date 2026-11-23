@@ -1,5 +1,7 @@
 package com.covalscy.bleedout;
 
+import com.covalscy.bleedout.api.BleedOutTags;
+import com.covalscy.bleedout.compat.ragdoll.SableRagdollClientCompat;
 import com.covalscy.bleedout.network.BleedOutNetwork;
 import com.covalscy.bleedout.network.SuicideRequestPacket;
 import com.mojang.blaze3d.platform.GlStateManager;
@@ -545,7 +547,26 @@ public class BleedOutClientHandler
         catch (Exception ignored) {}
     }
 
-    private static void resetMouseHandlerPressed(Minecraft mc)
+    private static boolean hasUsableWhileBleedingItem(Player player)
+    {
+        return BleedOutHandler.hasUsableWhileBleedingItem(player);
+    }
+
+    private static boolean hasAnyUsableWhileBleedingItemInHotbar(Player player)
+    {
+        if (player == null) return false;
+        if (player.getOffhandItem().is(BleedOutTags.Items.USABLE_WHILE_BLEEDING)) return true;
+        for (int i = 0; i < 9; i++)
+        {
+            if (player.getInventory().getItem(i).is(BleedOutTags.Items.USABLE_WHILE_BLEEDING))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static void resetMouseHandlerPressed(Minecraft mc, boolean clearRight)
     {
         if (mc == null || mc.mouseHandler == null) return;
         if (!mouseFieldsInitialized)
@@ -567,28 +588,36 @@ public class BleedOutClientHandler
         try
         {
             if (isLeftPressedField != null) isLeftPressedField.setBoolean(mc.mouseHandler, false);
-            if (isRightPressedField != null) isRightPressedField.setBoolean(mc.mouseHandler, false);
+            if (clearRight && isRightPressedField != null) isRightPressedField.setBoolean(mc.mouseHandler, false);
         }
         catch (Exception ignored) {}
     }
 
     public static void releaseAttackAndUseInputs(Minecraft mc, Player player)
     {
+        boolean allowUse = hasUsableWhileBleedingItem(player);
+
         if (mc.options != null)
         {
             releaseKeyMapping(mc.options.keyAttack);
-            releaseKeyMapping(mc.options.keyUse);
+            if (!allowUse)
+            {
+                releaseKeyMapping(mc.options.keyUse);
+            }
             releaseKeyMapping(mc.options.keyPickItem);
         }
 
         try
         {
             KeyMapping.set(InputConstants.Type.MOUSE.getOrCreate(GLFW.GLFW_MOUSE_BUTTON_LEFT), false);
-            KeyMapping.set(InputConstants.Type.MOUSE.getOrCreate(GLFW.GLFW_MOUSE_BUTTON_RIGHT), false);
+            if (!allowUse)
+            {
+                KeyMapping.set(InputConstants.Type.MOUSE.getOrCreate(GLFW.GLFW_MOUSE_BUTTON_RIGHT), false);
+            }
         }
         catch (Exception ignored) {}
 
-        resetMouseHandlerPressed(mc);
+        resetMouseHandlerPressed(mc, !allowUse);
 
         if (tackModChecked)
         {
@@ -603,7 +632,7 @@ public class BleedOutClientHandler
             resetAimingForPlayer(localPlayer);
         }
 
-        if (player != null && player.isUsingItem())
+        if (player != null && player.isUsingItem() && !player.getUseItem().is(BleedOutTags.Items.USABLE_WHILE_BLEEDING))
         {
             player.stopUsingItem();
         }
@@ -658,9 +687,14 @@ public class BleedOutClientHandler
     private static void releaseConfiguredKeyboardInputs(Minecraft mc, Player player, Set<String> disabledInputs)
     {
         if (disabledInputs == null || disabledInputs.isEmpty() || mc.options == null) return;
+        boolean allowUse = hasUsableWhileBleedingItem(player);
 
         for (KeyMapping keyMapping : mc.options.keyMappings)
         {
+            if (allowUse && keyMapping == mc.options.keyUse)
+            {
+                continue;
+            }
             if (shouldDisableKeyboardInput(disabledInputs, keyMapping))
             {
                 releaseKeyMapping(keyMapping);
@@ -792,7 +826,7 @@ public class BleedOutClientHandler
         if (button == 2 || button == 3 || button == 4) return;
 
         // Cancel attack and item use presses while bleeding so guns don't shoot & items aren't used
-        if (button == 0 || button == 1)
+        if (button == 0 || (button == 1 && !hasUsableWhileBleedingItem(player)))
         {
             event.setCanceled(true);
             releaseAttackAndUseInputs(mc, player);
@@ -808,6 +842,10 @@ public class BleedOutClientHandler
 
         if (player.getPersistentData().getBoolean("bleedout:bleeding"))
         {
+            if (event.isUseItem() && player.getItemInHand(event.getHand()).is(BleedOutTags.Items.USABLE_WHILE_BLEEDING))
+            {
+                return;
+            }
             event.setCanceled(true);
             event.setSwingHand(false);
             releaseAttackAndUseInputs(mc, player);
@@ -835,9 +873,52 @@ public class BleedOutClientHandler
         if (!player.getPersistentData().getBoolean("bleedout:bleeding")) return;
 
         releaseAttackAndUseInputs(mc, player);
+        if (SableRagdollClientCompat.isRidingRagdoll(player) && mc.options != null)
+        {
+            releaseMovementInputs(mc, player);
+        }
         if (mc.screen == null)
         {
             releaseConfiguredKeyboardInputs(mc, player, getDisabledBleedingInputs());
+        }
+    }
+
+    @SubscribeEvent(priority = EventPriority.HIGHEST)
+    public static void onMouseScroll(InputEvent.MouseScrollingEvent event)
+    {
+        Minecraft mc = Minecraft.getInstance();
+        Player player = mc.player;
+        if (player != null
+                && player.getPersistentData().getBoolean("bleedout:bleeding")
+                && SableRagdollClientCompat.isRidingRagdoll(player)
+                && !hasAnyUsableWhileBleedingItemInHotbar(player))
+        {
+            event.setCanceled(true);
+        }
+    }
+
+    private static void releaseMovementInputs(Minecraft mc, Player player)
+    {
+        if (mc.options != null)
+        {
+            releaseKeyMapping(mc.options.keyUp);
+            releaseKeyMapping(mc.options.keyDown);
+            releaseKeyMapping(mc.options.keyLeft);
+            releaseKeyMapping(mc.options.keyRight);
+            releaseKeyMapping(mc.options.keySprint);
+            releaseKeyMapping(mc.options.keyJump);
+            releaseKeyMapping(mc.options.keyShift);
+        }
+        if (player instanceof LocalPlayer localPlayer && localPlayer.input != null)
+        {
+            localPlayer.input.up = false;
+            localPlayer.input.down = false;
+            localPlayer.input.left = false;
+            localPlayer.input.right = false;
+            localPlayer.input.forwardImpulse = 0;
+            localPlayer.input.leftImpulse = 0;
+            localPlayer.input.jumping = false;
+            localPlayer.input.shiftKeyDown = false;
         }
     }
 
@@ -879,7 +960,8 @@ public class BleedOutClientHandler
         {
             releaseAttackAndUseInputs(mc, player);
 
-            if (player.getPose() != Pose.SWIMMING || player.getForcedPose() != Pose.SWIMMING)
+            boolean ridingRagdoll = SableRagdollClientCompat.isRidingRagdoll(player);
+            if (!ridingRagdoll && (player.getPose() != Pose.SWIMMING || player.getForcedPose() != Pose.SWIMMING))
             {
                 player.setForcedPose(Pose.SWIMMING);
                 player.setPose(Pose.SWIMMING);
@@ -896,9 +978,13 @@ public class BleedOutClientHandler
             {
                 mc.options.keyShift.setDown(false);
             }
+            if (ridingRagdoll && mc.options.keySprint.isDown())
+            {
+                releaseKeyMapping(mc.options.keySprint);
+            }
             player.setShiftKeyDown(false);
 
-            if (SyncedSettings.disableMovementWhileBleeding())
+            if (ridingRagdoll || SyncedSettings.disableMovementWhileBleeding())
             {
                 mc.options.keyUp.setDown(false);
                 mc.options.keyDown.setDown(false);
@@ -910,8 +996,12 @@ public class BleedOutClientHandler
             {
                 localPlayer.input.jumping = false;
                 localPlayer.input.shiftKeyDown = false;
-                if (SyncedSettings.disableMovementWhileBleeding())
+                if (ridingRagdoll || SyncedSettings.disableMovementWhileBleeding())
                 {
+                    localPlayer.input.up = false;
+                    localPlayer.input.down = false;
+                    localPlayer.input.left = false;
+                    localPlayer.input.right = false;
                     localPlayer.input.forwardImpulse = 0;
                     localPlayer.input.leftImpulse = 0;
                 }
@@ -964,7 +1054,7 @@ public class BleedOutClientHandler
             requireLmbReleaseForSuicide = false;
             BleedOutOverlay.resetLeftClickTicks();
             BleedOutOverlay.setSuicideSent(false);
-            if (player.getForcedPose() == Pose.SWIMMING)
+            if (!SableRagdollClientCompat.isRidingRagdoll(player) && player.getForcedPose() == Pose.SWIMMING)
             {
                 player.setForcedPose(null);
             }
@@ -992,6 +1082,10 @@ public class BleedOutClientHandler
         if (player.getPersistentData().getBoolean("bleedout:bleeding"))
         {
             releaseAttackAndUseInputs(mc, player);
+            if (SableRagdollClientCompat.isRidingRagdoll(player) && mc.options != null)
+            {
+                releaseMovementInputs(mc, player);
+            }
             Set<String> disabledInputs = getDisabledBleedingInputs();
             releaseConfiguredKeyboardInputs(mc, player, disabledInputs);
             if (mc.options.keyJump.isDown())

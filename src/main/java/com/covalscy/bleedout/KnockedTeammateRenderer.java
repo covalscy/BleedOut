@@ -1,5 +1,6 @@
 package com.covalscy.bleedout;
 
+import com.covalscy.bleedout.compat.ragdoll.SableRagdollClientCompat;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.mojang.blaze3d.vertex.*;
 import net.minecraft.client.Minecraft;
@@ -57,15 +58,15 @@ public class KnockedTeammateRenderer {
             boolean isKnocked = isPlayerKnocked(player);
             if (!isKnocked) continue;
 
-            double distance = localPlayer.position().distanceTo(player.position());
+            Vec3 pos = SableRagdollClientCompat.getWorldPosition(player, partialTick);
+            double distance = localPlayer.position().distanceTo(pos);
             if (distance > MAX_RENDER_DISTANCE) continue;
 
-            Vec3 pos = player.getPosition(partialTick);
             double x = pos.x;
             double y = pos.y;
             double z = pos.z;
 
-            double iconY = y + player.getBbHeight() / 2.0;
+            double iconY = y + (SableRagdollClientCompat.isRidingRagdoll(player) ? 0.5 : player.getBbHeight() / 2.0);
 
             poseStack.pushPose();
 

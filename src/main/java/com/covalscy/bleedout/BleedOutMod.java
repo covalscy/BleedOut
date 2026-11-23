@@ -34,6 +34,11 @@ public class BleedOutMod
         com.covalscy.bleedout.network.BleedOutNetwork.init(modEventBus);
 
         NeoForge.EVENT_BUS.register(this);
+        com.covalscy.bleedout.compat.ragdoll.SableRagdollCompat.registerEvents();
+        if (net.neoforged.fml.ModList.get().isLoaded("tacz")
+                && com.covalscy.bleedout.compat.ragdoll.SableRagdollCompat.isAvailable()) {
+            com.covalscy.bleedout.compat.tacz.TaczRagdollCompat.registerEvents();
+        }
 
         modContainer.registerConfig(ModConfig.Type.COMMON, Config.SPEC);
         modContainer.registerConfig(ModConfig.Type.CLIENT, ClientConfig.SPEC);

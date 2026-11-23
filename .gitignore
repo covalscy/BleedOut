@@ -32,8 +32,23 @@ run2
 run*/
 /run*
 
-# Files from Forge MDK
+# Forge / NeoForge & local subprojects
 forge*changelog.txt
 /LayingOBB
+sable-player-ragdoll/
+BleedOut-Resuscitation/
 
-sable-player-ragdoll
+# Gradle & Minecraft runtime
+runs/
+logs/
+crash-reports/
+*.log
+*.log.gz
+*.hprof
+/*.jar
+
+# IDEs, tooling & OS
+.vscode/
+.agent/
+.DS_Store
+Thumbs.db

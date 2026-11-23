@@ -25,6 +25,13 @@ neoForge {
             programArguments.addAll '--username', "Dev${new Random().nextInt(1000)}"
         }
 
+        client2 {
+            client()
+            gameDirectory = project.file('run2')
+            systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
+            programArguments.addAll '--username', "Dev2_${new Random().nextInt(1000)}"
+        }
+
         server {
             server()
             systemProperty 'neoforge.enabledGameTestNamespaces', project.mod_id
@@ -44,18 +51,63 @@ neoForge {
     }
 }
 
+def rescueAddonDir = file('BleedOut-Resuscitation')
+def rescueAddonJar = file('BleedOut-Resuscitation/build/libs/bleedout_rescue-1.0.0-1.21.1.jar')
+if (rescueAddonDir.isDirectory()) {
+    configurations {
+        localRuntime
+    }
+    configurations.runtimeClasspath.extendsFrom(configurations.localRuntime)
+
+    def buildRescueAddon = tasks.register('buildRescueAddon', Exec) {
+        group = 'build'
+        description = 'Builds BleedOut: Resuscitation addon jar for local run configurations'
+        workingDir = rescueAddonDir
+        inputs.files(fileTree(new File(rescueAddonDir, 'src')),
+                new File(rescueAddonDir, 'build.gradle'),
+                new File(rescueAddonDir, 'gradle.properties'))
+        outputs.file(rescueAddonJar)
+        if (System.getProperty('os.name').toLowerCase().contains('win')) {
+            commandLine 'cmd', '/c', 'gradlew.bat', 'jar', '--no-daemon'
+        } else {
+            commandLine './gradlew', 'jar', '--no-daemon'
+        }
+    }
+
+    dependencies {
+        localRuntime files(rescueAddonJar) { builtBy buildRescueAddon }
+    }
+}
+
 sourceSets.main.resources { srcDir 'src/generated/resources' }
 
 repositories {
+    mavenLocal()
     mavenCentral()
     maven {
         name = "CurseForge"
         url = "https://cursemaven.com"
     }
+    maven {
+        name = "RyanHCode"
+        url = "https://maven.ryanhcode.dev/releases"
+    }
 }
 
 dependencies {
     implementation "curse.maven:tacz-1-21-1-1353462:8493084"
+    implementation("com.covalscy.bleedoutragdolls:bleedout_ragdolls-1.21.1:0.8.0-fork.1") {
+        transitive = false
+    }
+    implementation "curse.maven:timeless-and-classics-zero-1028108:9623169"
+    implementation("dev.ryanhcode.sable:sable-neoforge-1.21.1:2.0.3") {
+        exclude group: 'foundry.veil'
+        exclude group: 'com.simibubi.create'
+        exclude group: 'net.createmod.ponder'
+        exclude group: 'dev.engine-room.flywheel'
+        exclude group: 'com.tterrag.registrate'
+    }
+    compileOnly "dev.ryanhcode.sable-companion:sable-companion-common-1.21.1:1.6.0"
 }
 
 tasks.named('processResources', ProcessResources).configure {

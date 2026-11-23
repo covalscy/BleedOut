@@ -1,6 +1,7 @@
 package com.covalscy.bleedout.mixin;
 
 import com.covalscy.bleedout.client.KnockedCrawlAnimation;
+import com.covalscy.bleedout.compat.ragdoll.SableRagdollClientCompat;
 import net.minecraft.client.model.PlayerModel;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
@@ -18,7 +19,9 @@ public abstract class PlayerModelMixin {
     @Inject(method = "setupAnim(Lnet/minecraft/world/entity/LivingEntity;FFFFF)V", at = @At("TAIL"))
     private void bleedout$knockedCrawl(LivingEntity entity, float limbSwing, float limbSwingAmount, float ageInTicks,
                                        float netHeadYaw, float headPitch, CallbackInfo ci) {
-        if (entity instanceof Player player && player.getPersistentData().getBoolean("bleedout:bleeding")) {
+        if (entity instanceof Player player
+                && player.getPersistentData().getBoolean("bleedout:bleeding")
+                && !SableRagdollClientCompat.isRidingRagdoll(player)) {
             KnockedCrawlAnimation.apply((PlayerModel<?>) (Object) this, limbSwing, limbSwingAmount, ageInTicks);
         }
     }

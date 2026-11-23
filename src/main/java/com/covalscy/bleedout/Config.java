@@ -98,6 +98,11 @@ public class Config
             .comment("Включить таймер кровотечения (если отключено, игроки будут лежать бесконечно, пока их не поднимут или не убьют)")
             .define("enableBleedoutTimer", true);
 
+    public static final ModConfigSpec.BooleanValue ENABLE_RAGDOLL_COMPAT = BUILDER
+            .comment("Enable limp ragdoll physics for knocked players when sable_player_ragdoll is installed")
+            .comment("Включить вялый физический регдолл для нокнутых игроков, если установлен мод sable_player_ragdoll")
+            .define("enableRagdollCompat", true);
+
     static final ModConfigSpec SPEC = BUILDER.build();
 
     public static int bleedoutTime = 45;
@@ -129,6 +134,7 @@ public class Config
     );
     public static boolean enableSuicide = true;
     public static boolean enableBleedoutTimer = true;
+    public static boolean enableRagdollCompat = true;
 
     @SubscribeEvent
     static void onLoad(final ModConfigEvent event)
@@ -150,6 +156,7 @@ public class Config
         disabledInputsWhileBleeding = DISABLED_INPUTS_WHILE_BLEEDING.get();
         enableSuicide = ENABLE_SUICIDE.get();
         enableBleedoutTimer = ENABLE_BLEEDOUT_TIMER.get();
+        enableRagdollCompat = ENABLE_RAGDOLL_COMPAT.get();
 
         if (event instanceof ModConfigEvent.Reloading)
         {
